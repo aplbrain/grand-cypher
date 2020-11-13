@@ -49,3 +49,21 @@ RETURN
     A, B, C
 """)
 ```
+
+# Feature Parity
+
+| Feature                           | Support |     |
+| --------------------------------- | ------- | --- |
+| Multiple `MATCH` clauses          | ✅      |     |
+| `WHERE`-clause filtering on nodes | ✅      |     |
+| Anonymous `-[]-` edges            | ✅      |     |
+| `WHERE`-clause filtering on edges | 🛣       |     |
+| Chained `()-[]->()-[]->()` edges  | 🛣       |     |
+| Backwards `()<-[]-()` edges       | 🛣       |     |
+| Undirected `()-[]-()` edges       | 🛣       |     |
+| `(:Type)` node-types              | 🛣       |     |
+| `[:Type]` edge-types              | 🛣       |     |
+
+|                |                |                  |
+| -------------- | -------------- | ---------------- |
+| ✅ = Supported | 🛣 = On Roadmap | 🔴 = Not Planned |
