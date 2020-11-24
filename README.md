@@ -52,19 +52,22 @@ RETURN
 
 # Feature Parity
 
-| Feature                           | Support |     |
-| --------------------------------- | ------- | --- |
-| Multiple `MATCH` clauses          | ✅      |     |
-| `WHERE`-clause filtering on nodes | ✅      |     |
-| Anonymous `-[]-` edges            | ✅      |     |
-| `WHERE`-clause filtering on edges | 🛣       |     |
-| Chained `()-[]->()-[]->()` edges  | 🛣       |     |
-| Backwards `()<-[]-()` edges       | 🛣       |     |
-| Undirected `()-[]-()` edges       | 🛣       |     |
-| `(:Type)` node-types              | 🛣       |     |
-| `[:Type]` edge-types              | 🛣       |     |
-| `LIMIT`                           | ✅      |     |
-| `SKIP`                            | ✅      |     |
+| Feature                                    | Support |     |
+| ------------------------------------------ | ------- | --- |
+| Multiple `MATCH` clauses                   | ✅      |     |
+| `WHERE`-clause filtering on nodes          | ✅      |     |
+| Anonymous `-[]-` edges                     | ✅      |     |
+| `LIMIT`                                    | ✅      |     |
+| `SKIP`                                     | ✅      |     |
+| `WHERE`-clause filtering on edges          | 🛣       |     |
+| Node/edge attributes with `{}` syntax      | 🛣       |     |
+| `OPTIONAL MATCH`                           | 🛣       |     |
+| Chained `()-[]->()-[]->()` edges           | 🛣       |     |
+| Backwards `()<-[]-()` edges                | 🛣       |     |
+| Undirected `()-[]-()` edges                | 🛣       |     |
+| `(:Type)` node-types                       | 🛣       |     |
+| `[:Type]` edge-types                       | 🛣       |     |
+| Graph mutations (e.g. `DELETE`, `SET`,...) | 🔴      |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |
