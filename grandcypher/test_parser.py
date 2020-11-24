@@ -208,3 +208,15 @@ class TestKarate:
         RETURN A.club, B.club
         """
         assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 544
+
+
+class TestLimitSkip:
+    def test_simple_multi_edge(self):
+        qry = """
+        MATCH (A)-[]->(B)
+        MATCH (B)-[]->(C)
+        WHERE A.club == "Mr. Hi"
+        RETURN A.club, B.club
+        LIMIT 10
+        """
+        assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 10

@@ -56,6 +56,9 @@ value               : STRING | NUMBER
 
 
 return_clause       : "return"i entity_id ("," entity_id)*
+                    | "return"i entity_id ("," entity_id)* limit_clause
+
+limit_clause        : "limit"i NUMBER
 
 
 ?entity_id          : CNAME
@@ -85,6 +88,7 @@ class GrandCypherTransformer(Transformer):
         self._motif = nx.DiGraph()
         self._matches = None
         self._return_requests = []
+        self._limit = None
 
     def _lookup(self, data_path):
         if "." in data_path:
@@ -112,9 +116,18 @@ class GrandCypherTransformer(Transformer):
 
     def return_clause(self, return_clause):
         for item in return_clause:
-            self._return_requests.append(item)
+            if item:
+                self._return_requests.append(item)
 
-    def returns(self):
+    def limit_clause(self, limit):
+        limit = int(limit[-1])
+        # if not isinstance(limit, int):
+        #     raise TypeError("Limit must be an integer")
+        self._limit = limit
+
+    def returns(self, ignore_limit=False):
+        if self._limit and ignore_limit is False:
+            return {r: self._lookup(r)[: self._limit] for r in self._return_requests}
         return {r: self._lookup(r) for r in self._return_requests}
 
     def _get_entity_from_host(self, entity_name, entity_attribute=None):
