@@ -57,8 +57,11 @@ value               : STRING | NUMBER
 
 return_clause       : "return"i entity_id ("," entity_id)*
                     | "return"i entity_id ("," entity_id)* limit_clause
+                    | "return"i entity_id ("," entity_id)* skip_clause
+                    | "return"i entity_id ("," entity_id)* skip_clause limit_clause
 
 limit_clause        : "limit"i NUMBER
+skip_clause         : "skip"i NUMBER
 
 
 ?entity_id          : CNAME
@@ -89,6 +92,7 @@ class GrandCypherTransformer(Transformer):
         self._matches = None
         self._return_requests = []
         self._limit = None
+        self._skip = 0
 
     def _lookup(self, data_path):
         if "." in data_path:
@@ -121,14 +125,19 @@ class GrandCypherTransformer(Transformer):
 
     def limit_clause(self, limit):
         limit = int(limit[-1])
-        # if not isinstance(limit, int):
-        #     raise TypeError("Limit must be an integer")
         self._limit = limit
+
+    def skip_clause(self, skip):
+        skip = int(skip[-1])
+        self._skip = skip
 
     def returns(self, ignore_limit=False):
         if self._limit and ignore_limit is False:
-            return {r: self._lookup(r)[: self._limit] for r in self._return_requests}
-        return {r: self._lookup(r) for r in self._return_requests}
+            return {
+                r: self._lookup(r)[self._skip : self._skip + self._limit]
+                for r in self._return_requests
+            }
+        return {r: self._lookup(r)[self._skip :] for r in self._return_requests}
 
     def _get_entity_from_host(self, entity_name, entity_attribute=None):
 

@@ -211,7 +211,7 @@ class TestKarate:
 
 
 class TestLimitSkip:
-    def test_simple_multi_edge(self):
+    def test_limit_only(self):
         qry = """
         MATCH (A)-[]->(B)
         MATCH (B)-[]->(C)
@@ -220,3 +220,37 @@ class TestLimitSkip:
         LIMIT 10
         """
         assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 10
+
+    def test_skip_only(self):
+        qry = """
+        MATCH (A)-[]->(B)
+        MATCH (B)-[]->(C)
+        WHERE A.club == "Mr. Hi"
+        RETURN A.club, B.club
+        SKIP 10
+        """
+        assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 544 - 10
+
+    def test_skip_and_limit(self):
+        base_qry_for_comparison = """
+        MATCH (A)-[]->(B)
+        MATCH (B)-[]->(C)
+        WHERE A.club == "Mr. Hi"
+        RETURN A.club, B.club
+        """
+
+        qry = """
+        MATCH (A)-[]->(B)
+        MATCH (B)-[]->(C)
+        WHERE A.club == "Mr. Hi"
+        RETURN A.club, B.club
+        SKIP 10 LIMIT 10
+        """
+        results = GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]
+        assert len(results) == 10
+        assert (
+            results
+            == GrandCypher(nx.karate_club_graph()).run(base_qry_for_comparison)[
+                "A.club"
+            ][10:20]
+        )
