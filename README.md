@@ -63,7 +63,8 @@ RETURN
 | Undirected `()-[]-()` edges       | 🛣       |     |
 | `(:Type)` node-types              | 🛣       |     |
 | `[:Type]` edge-types              | 🛣       |     |
-| `LIMIT` and `SKIP`                | 🛣       |     |
+| `LIMIT`                           | ✅      |     |
+| `SKIP`                            | 🛣       |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |
