@@ -59,8 +59,8 @@ RETURN
 | Anonymous `-[]-` edges                     | ✅      |     |
 | `LIMIT`                                    | ✅      |     |
 | `SKIP`                                     | ✅      |     |
+| Node/edge attributes with `{}` syntax      | ✅      |     |
 | `WHERE`-clause filtering on edges          | 🛣       |     |
-| Node/edge attributes with `{}` syntax      | 🛣       |     |
 | `OPTIONAL MATCH`                           | 🛣       |     |
 | Chained `()-[]->()-[]->()` edges           | 🛣       |     |
 | Backwards `()<-[]-()` edges                | 🛣       |     |
