@@ -52,8 +52,6 @@ op                  : "==" -> op_eq
                     | ">="-> op_gte
                     | "<="-> op_lte
 
-value               : STRING | NUMBER
-
 
 return_clause       : "return"i entity_id ("," entity_id)*
                     | "return"i entity_id ("," entity_id)* limit_clause
@@ -68,12 +66,21 @@ skip_clause         : "skip"i NUMBER
                     | CNAME "." CNAME
 
 ?node_match         : "(" CNAME ")"
+                    | "(" CNAME json_dict ")"
+
 ?edge_match         : "[" CNAME "]"
                     | "[]"
 
+json_dict           : "{" json_rule ("," json_rule)* "}"
+?json_rule          : CNAME ":" value
+
+
+key                 : CNAME
+value               : ESTRING | NUMBER
+
 
 %import common.CNAME            -> CNAME
-%import common.ESCAPED_STRING   -> STRING
+%import common.ESCAPED_STRING   -> ESTRING
 %import common.SIGNED_NUMBER    -> NUMBER
 
 %import common.WS
@@ -167,6 +174,7 @@ class GrandCypherTransformer(Transformer):
         for match in self._get_structural_matches():
             should_include = True
             for condition in self._conditions:
+                print(condition)
                 (should_be, entity_id, operator, value) = condition
                 host_entity_id = entity_id.split(".")
                 host_entity_id[0] = match[host_entity_id[0]]
@@ -195,6 +203,11 @@ class GrandCypherTransformer(Transformer):
         return edge_name
 
     def node_match(self, node_name):
+        if isinstance(node_name, list):
+            node_name, constraints = node_name
+        for key, val in constraints.items():
+            self._conditions.append((True, f"{node_name}.{key}", _OPERATORS["=="], val))
+        print(self._conditions)
         return node_name
 
     def match_clause(self, match_clause: tuple):
@@ -237,6 +250,15 @@ class GrandCypherTransformer(Transformer):
 
     def op_lte(self, _):
         return _OPERATORS["<="]
+
+    def json_dict(self, tup):
+        constraints = {}
+        for key, value in tup:
+            constraints[key] = value
+        return constraints
+
+    def json_rule(self, rule):
+        return (rule[0].value, rule[1])
 
 
 class GrandCypher:

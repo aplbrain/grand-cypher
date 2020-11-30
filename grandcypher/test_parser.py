@@ -210,6 +210,22 @@ class TestKarate:
         assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 544
 
 
+class TestDictAttributes:
+    def test_node_dict(self):
+        qry = """
+        MATCH (A {type: "foo"})-[]->(B)
+        RETURN A
+        """
+        host = nx.DiGraph()
+        host.add_node("Y", type="foo")
+        host.add_node("X", type="bar")
+        host.add_edge("X", "Y")
+        host.add_edge("Y", "Z", type="foo")
+        host.add_edge("X", "Z", type="bar")
+
+        assert len(GrandCypher(host).run(qry)["A"]) == 1
+
+
 class TestLimitSkip:
     def test_limit_only(self):
         qry = """
