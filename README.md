@@ -60,7 +60,8 @@ RETURN
 | `LIMIT`                                    | ✅      |     |
 | `SKIP`                                     | ✅      |     |
 | Node/edge attributes with `{}` syntax      | ✅      |     |
-| `WHERE`-clause filtering on edges          | 🛣       |     |
+| `WHERE`-clause filtering on edges          | ✅      |     |
+| Named `-[]-` edges                         | ✅      |     |
 | `OPTIONAL MATCH`                           | 🛣       |     |
 | Chained `()-[]->()-[]->()` edges           | 🛣       |     |
 | Backwards `()<-[]-()` edges                | 🛣       |     |
