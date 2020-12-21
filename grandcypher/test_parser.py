@@ -1,11 +1,11 @@
 import networkx as nx
 
-from . import GrandCypherGrammar, GrandCypherTransformer, GrandCypher
+from . import _GrandCypherGrammar, _GrandCypherTransformer, GrandCypher
 
 
 class TestParsing:
     def test_simple_match_query(self):
-        tree = GrandCypherGrammar.parse(
+        tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         WHERE A > A
@@ -14,8 +14,8 @@ class TestParsing:
         )
         assert len(tree.children[0].children) == 3
 
-    def test_case_insensitive(self):
-        tree = GrandCypherGrammar.parse(
+    def test_keywords_case_insensitive(self):
+        tree = _GrandCypherGrammar.parse(
             """
         mAtCh (A)-[B]->(C)
         WHERe A > A
@@ -27,7 +27,7 @@ class TestParsing:
 
 class TestWorking:
     def test_simple_structural_match(self):
-        tree = GrandCypherGrammar.parse(
+        tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         RETURN A
@@ -36,12 +36,12 @@ class TestWorking:
         host = nx.DiGraph()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
-        gct = GrandCypherTransformer(host)
+        gct = _GrandCypherTransformer(host)
         gct.transform(tree)
         assert len(gct._get_true_matches()) == 2
 
     def test_simple_structural_match_returns_nodes(self):
-        tree = GrandCypherGrammar.parse(
+        tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         RETURN A
@@ -50,14 +50,14 @@ class TestWorking:
         host = nx.DiGraph()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
-        gct = GrandCypherTransformer(host)
+        gct = _GrandCypherTransformer(host)
         gct.transform(tree)
         returns = gct.returns()
         assert "A" in returns
         assert len(returns["A"]) == 2
 
     def test_simple_structural_match_returns_node_attributes(self):
-        tree = GrandCypherGrammar.parse(
+        tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         RETURN A.dinnertime
@@ -67,7 +67,7 @@ class TestWorking:
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_node("x", dinnertime="no thanks I already ate")
-        gct = GrandCypherTransformer(host)
+        gct = _GrandCypherTransformer(host)
         gct.transform(tree)
         returns = gct.returns()
         assert "A" not in returns
@@ -184,19 +184,61 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
 
-    # def test_simple_api_single_edge_where(self):
-    #     host = nx.DiGraph()
-    #     host.add_edge("x", "y")
-    #     host.add_edge("y", "z", foo="bar")
-    #     host.add_edge("z", "x")
+    def test_single_edge_where(self):
+        host = nx.DiGraph()
+        host.add_edge("y", "z")
 
-    #     qry = """
-    #     MATCH (A)-[AB]->(B)
-    #     WHERE AB.foo == "bar"
-    #     RETURN A
-    #     """
+        qry = """
+        MATCH (A)-[AB]->(B)
+        RETURN AB
+        """
 
-    #     assert len(GrandCypher(host).run(qry)["A"]) == 1
+        assert len(GrandCypher(host).run(qry)["AB"]) == 1
+
+    def test_simple_api_single_edge_where(self):
+        host = nx.DiGraph()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z", foo="bar")
+        host.add_edge("z", "x")
+
+        qry = """
+        MATCH (A)-[AB]->(B)
+        WHERE AB.foo == "bar"
+        RETURN A
+        """
+
+        assert len(GrandCypher(host).run(qry)["A"]) == 1
+
+    def test_simple_api_two_edge_where_clauses_same_edge(self):
+        host = nx.DiGraph()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z", foo="bar", weight=12)
+        host.add_edge("z", "x")
+
+        qry = """
+        MATCH (A)-[AB]->(B)
+        WHERE AB.foo == "bar"
+        AND AB.weight > 11
+        RETURN AB
+        """
+
+        assert len(GrandCypher(host).run(qry)["AB"]) == 1
+
+    def test_simple_api_two_edge_where_clauses_diff_edge(self):
+        host = nx.DiGraph()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z", foo="bar")
+        host.add_edge("z", "x", weight=12)
+
+        qry = """
+        MATCH (A)-[AB]->(B)
+        MATCH (B)-[BC]->(C)
+        WHERE AB.foo == "bar"
+        AND BC.weight > 11
+        RETURN AB
+        """
+        print(GrandCypher(host).run(qry))
+        assert len(GrandCypher(host).run(qry)["AB"]) == 1
 
 
 class TestKarate:
