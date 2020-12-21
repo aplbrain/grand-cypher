@@ -1,6 +1,10 @@
 """
 GrandCypher is a Cypher interpreter for the Grand graph library.
 
+You can use this tool to search Python graph data-structures by
+data/attribute or by structure, using the same language you'd use
+to search in a much larger graph database.
+
 """
 from typing import Tuple, Dict, List
 import networkx as nx
@@ -24,7 +28,7 @@ _OPERATORS = {
 }
 
 
-GrandCypherGrammar = Lark(
+_GrandCypherGrammar = Lark(
     """
 start               : query
 
@@ -91,17 +95,20 @@ value               : ESTRING | NUMBER
 )
 
 
-class GrandCypherTransformer(Transformer):
+class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
         self._target_graph = target_graph
         self._conditions = []
         self._motif = nx.DiGraph()
         self._matches = None
         self._return_requests = []
+        self._return_edges = {}
         self._limit = None
         self._skip = 0
 
     def _lookup(self, data_path):
+        if not isinstance(data_path, str):
+            data_path = data_path.value
         if "." in data_path:
             entity_name, entity_attribute = data_path.split(".")
         else:
@@ -123,11 +130,34 @@ class GrandCypherTransformer(Transformer):
                 # Otherwise, just return the node from the host graph
                 return [mapping[entity_name] for mapping in self._get_true_matches()]
         else:
-            raise NotImplementedError("Cannot yet return edge data.")
+            if data_path in self._return_edges:
+                mapping_u, mapping_v = self._return_edges[data_path]
+                # We are looking for an edge mapping in the target graph:
+                if entity_attribute:
+                    # Get the correct entity from the target host graph,
+                    # and then return the attribute:
+                    return [
+                        self._target_graph.get_edge_data(
+                            mapping[mapping_u], mapping[mapping_v]
+                        ).get(entity_attribute, None)
+                        for mapping in self._get_true_matches()
+                    ]
+                else:
+                    # Otherwise, just return the node from the host graph
+                    return [
+                        self._target_graph.get_edge_data(
+                            mapping[mapping_u], mapping[mapping_v]
+                        )
+                        for mapping in self._get_true_matches()
+                    ]
 
-    def return_clause(self, return_clause):
-        for item in return_clause:
+            raise NotImplementedError(f"Unknown entity name: {data_path}")
+
+    def return_clause(self, clause):
+        for item in clause:
             if item:
+                if not isinstance(item, str):
+                    item = str(item.value)
                 self._return_requests.append(item)
 
     def limit_clause(self, limit):
@@ -158,7 +188,17 @@ class GrandCypherTransformer(Transformer):
                 # Otherwise, just return the node from the host graph
                 return entity_name
         else:
-            raise NotImplementedError("Cannot yet return edge data.")
+            # looking for an edge:
+            edge_data = self._target_graph.get_edge_data(*entity_name)
+            if not edge_data:
+                return (
+                    None  # print(f"Nothing found for {entity_name} {entity_attribute}")
+                )
+            if entity_attribute:
+                # looking for edge attribute:
+                return edge_data.get(entity_attribute, None)
+            else:
+                return self._target_graph.get_edge_data(*entity_name)
 
     def _OP(self, operator_string, left, right):
         try:
@@ -174,10 +214,16 @@ class GrandCypherTransformer(Transformer):
         for match in self._get_structural_matches():
             should_include = True
             for condition in self._conditions:
-                print(condition)
                 (should_be, entity_id, operator, value) = condition
                 host_entity_id = entity_id.split(".")
-                host_entity_id[0] = match[host_entity_id[0]]
+                if host_entity_id[0] in match:
+                    host_entity_id[0] = match[host_entity_id[0]]
+                elif host_entity_id[0] in self._return_edges:
+                    # looking for edge...
+                    edge_mapping = self._return_edges[host_entity_id[0]]
+                    host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
+                else:
+                    raise IndexError(f"Entity {host_entity_id} not in graph.")
                 val = self._OP(
                     operator,
                     self._get_entity_from_host(*host_entity_id),
@@ -200,6 +246,7 @@ class GrandCypherTransformer(Transformer):
         return entity_id.value
 
     def edge_match(self, edge_name):
+        print(edge_name)
         return edge_name
 
     def node_match(self, node_name):
@@ -211,11 +258,10 @@ class GrandCypherTransformer(Transformer):
         return node_name
 
     def match_clause(self, match_clause: tuple):
-        """
-        .
-        """
-        (u, _, v) = match_clause
-        self._motif.add_edge(u, v)
+        (u, g, v) = match_clause
+        if g:
+            self._return_edges[g.value] = (u.value, v.value)
+        self._motif.add_edge(u.value, v.value)
 
     def where_clause(self, where_clause: tuple):
         for clause in where_clause:
@@ -262,10 +308,42 @@ class GrandCypherTransformer(Transformer):
 
 
 class GrandCypher:
+    """
+    The user-facing interface for GrandCypher.
+
+    Create a GrandCypher object in order to wrap your NetworkX-flavored graph
+    with a Cypher-queryable interface.
+
+    """
+
     def __init__(self, host_graph: nx.Graph) -> None:
-        self._transformer = GrandCypherTransformer(host_graph)
+
+        """
+        Create a new GrandCypher object to query graphs with Cypher.
+
+        Arguments:
+            host_graph (nx.Graph): The host graph to use as a "graph database"
+
+        Returns:
+            None
+
+        """
+
+        self._transformer = _GrandCypherTransformer(host_graph)
         self._host_graph = host_graph
 
     def run(self, cypher: str) -> Dict[str, List]:
-        self._transformer.transform(GrandCypherGrammar.parse(cypher))
+        """
+        Run a cypher query on the host graph.
+
+        Arguments:
+            cypher (str): The cypher query to run
+
+        Returns:
+            Dict[str, List]: A dictionary mapping of results, where keys are
+                the items the user requested in the RETURN statement, and the
+                values are all possible matches of that structure in the graph.
+
+        """
+        self._transformer.transform(_GrandCypherGrammar.parse(cypher))
         return self._transformer.returns()
