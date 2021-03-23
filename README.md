@@ -1,5 +1,9 @@
 # GrandCypher
 
+```shell
+pip install grand-cypher
+```
+
 GrandCypher is a partial implementation of the Cypher graph query language written in Python, for Python data structures.
 
 You likely already know Cypher from the Neo4j Graph Database. Use it with your favorite graph libraries in Python!

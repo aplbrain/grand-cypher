@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 ["sqlalchemy"]
 
 setuptools.setup(
-    name="grandcypher",
+    name="grand-cypher",
     version="0.1.0",
     author="Jordan Matelsky",
     author_email="opensource@matelsky.com",
