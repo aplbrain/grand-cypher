@@ -62,6 +62,7 @@ RETURN
 | Node/edge attributes with `{}` syntax      | ✅      |     |
 | `WHERE`-clause filtering on edges          | ✅      |     |
 | Named `-[]-` edges                         | ✅      |     |
+| Boolean Arithmetic (`AND`/`OR`)            | 🛣      |     |
 | `OPTIONAL MATCH`                           | 🛣       |     |
 | Chained `()-[]->()-[]->()` edges           | 🛣       |     |
 | Backwards `()<-[]-()` edges                | 🛣       |     |
