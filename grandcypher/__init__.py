@@ -42,7 +42,11 @@ many_match_clause   : (match_clause)+
 match_clause        : "match"i node_match "-" edge_match "->" node_match
 
 
-where_clause        : "where"i condition ("and"i condition)*
+where_clause        : "where"i condition_list
+
+condition_list      : condition
+                    | condition "and"i condition_list
+                    | condition "or"i condition_list
 
 condition           : entity_id op entity_id_or_value
 
@@ -266,6 +270,10 @@ class _GrandCypherTransformer(Transformer):
     def where_clause(self, where_clause: tuple):
         for clause in where_clause:
             self._conditions.append(clause)
+
+    def condition_list(self, clauses):
+        print(clauses)
+        return clauses
 
     def condition(self, condition):
         if len(condition) == 3:

@@ -312,3 +312,37 @@ class TestLimitSkip:
                 "A.club"
             ][10:20]
         )
+
+
+class TestWhereClause:
+    def test_or_basic_clause(self):
+        qry = """
+        MATCH (A)-[]->(B)
+        WHERE A.type == 1 OR A.type == 2
+        RETURN A
+        """
+        host = nx.DiGraph()
+        host.add_node("A", type=1)
+        host.add_node("B", type=2)
+        host.add_edge("A", "B")
+        host.add_edge("B", "C")
+        results = GrandCypher(host).run(qry)
+        assert len(results) == 2
+
+    def test_or_two_clauses(self):
+        qry = """
+        MATCH (A)-[]->(B)
+        WHERE A.type == 1 OR A.type == 2 OR A.type <> 3
+        RETURN A
+        """
+        host = nx.DiGraph()
+        host.add_node("A", type=1)
+        host.add_node("B", type=2)
+        host.add_node("C", type=3)
+        host.add_node("D", type=4)
+        host.add_edge("A", "B")
+        host.add_edge("B", "C")
+        host.add_edge("C", "D")
+        host.add_edge("D", "A")
+        results = GrandCypher(host).run(qry)
+        assert len(results) == 2
