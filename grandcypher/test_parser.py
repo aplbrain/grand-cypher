@@ -312,3 +312,38 @@ class TestLimitSkip:
                 "A.club"
             ][10:20]
         )
+
+    def test_single_node_query(self):
+        """
+        Test that you can search for individual nodes with properties
+        """
+
+        qry = """
+        MATCH (c)
+        WHERE c.name = "London"
+        RETURN c
+        """
+
+        host = nx.DiGraph()
+        host.add_node("London", type="City", name="London")
+
+        assert len(GrandCypher(host).run(qry)["c"]) == 1
+
+    def test_multi_node_query(self):
+        """
+        Test that you can search for individual nodes with properties
+        """
+
+        qry = """
+        MATCH (c)-[]->(b)
+        WHERE c.name = "London"
+        AND b.type = "City"
+        RETURN b, c
+        """
+
+        host = nx.DiGraph()
+        host.add_node("London", type="City", name="London")
+        host.add_node("NYC", type="City", name="NYC")
+        host.add_edge("London", "NYC")
+
+        assert len(GrandCypher(host).run(qry)["c"]) == 1
