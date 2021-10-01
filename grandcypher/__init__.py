@@ -96,6 +96,7 @@ value               : ESTRING | NUMBER
     start="start",
 )
 
+__version__ = "0.1.1"
 
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
