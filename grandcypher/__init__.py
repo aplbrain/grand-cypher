@@ -40,6 +40,7 @@ many_match_clause   : (match_clause)+
 
 
 match_clause        : "match"i node_match "-" edge_match "->" node_match
+                    | "match"i node_match
 
 
 where_clause        : "where"i condition ("and"i condition)*
@@ -50,6 +51,7 @@ condition           : entity_id op entity_id_or_value
                     | value
 
 op                  : "==" -> op_eq
+                    | "=" -> op_eq
                     | "<>" -> op_neq
                     | ">" -> op_gt
                     | "<" -> op_lt
@@ -246,18 +248,24 @@ class _GrandCypherTransformer(Transformer):
         return entity_id.value
 
     def edge_match(self, edge_name):
-        print(edge_name)
         return edge_name
 
     def node_match(self, node_name):
         if isinstance(node_name, list):
             node_name, constraints = node_name
+        else:
+            constraints = {}
         for key, val in constraints.items():
-            self._conditions.append((True, f"{node_name}.{key}", _OPERATORS["=="], val))
-        print(self._conditions)
+            self._conditions.append(
+                (True, f"{node_name}.{key}", _OPERATORS["=="], val)
+            )
         return node_name
 
     def match_clause(self, match_clause: tuple):
+        if len(match_clause) == 1:
+            # This is just a node match:
+            self._motif.add_node(match_clause[0].value)
+            return
         (u, g, v) = match_clause
         if g:
             self._return_edges[g.value] = (u.value, v.value)
