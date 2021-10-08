@@ -1,10 +1,13 @@
-# GrandCypher
+<h1 align=center>GrandCypher</h1>
+<div align=center><img src="https://img.shields.io/pypi/v/grand-cypher?style=for-the-badge" /> <img alt="GitHub Workflow Status (branch)" src="https://img.shields.io/github/workflow/status/aplbrain/grand-cypher/Test%20and%20lint/master?style=for-the-badge"></div>
+
+---
 
 ```shell
 pip install grand-cypher
 ```
 
-GrandCypher is a partial implementation of the Cypher graph query language written in Python, for Python data structures.
+GrandCypher is a partial (and growing!) implementation of the Cypher graph query language written in Python, for Python data structures.
 
 You likely already know Cypher from the Neo4j Graph Database. Use it with your favorite graph libraries in Python!
 
