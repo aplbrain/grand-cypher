@@ -29,7 +29,7 @@ RETURN A.club, B.club
 
 ### Example Usage with SQL
 
-This example uses [grand-graph](https://github.com/aplbrain/grand) to run queries in SQL:
+Create your own "Sqlite for Neo4j"! This example uses [grand-graph](https://github.com/aplbrain/grand) to run queries in SQL:
 
 ```python
 import grand

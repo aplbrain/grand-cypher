@@ -98,6 +98,7 @@ value               : ESTRING | NUMBER
 
 __version__ = "0.1.1"
 
+
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
         self._target_graph = target_graph
@@ -228,9 +229,7 @@ class _GrandCypherTransformer(Transformer):
                 else:
                     raise IndexError(f"Entity {host_entity_id} not in graph.")
                 val = self._OP(
-                    operator,
-                    self._get_entity_from_host(*host_entity_id),
-                    value,
+                    operator, self._get_entity_from_host(*host_entity_id), value,
                 )
                 if val != should_be:
                     should_include = False
@@ -240,7 +239,13 @@ class _GrandCypherTransformer(Transformer):
 
     def _get_structural_matches(self):
         if not self._matches:
-            self._matches = grandiso.find_motifs(self._motif, self._target_graph)
+            self._matches = grandiso.find_motifs(
+                self._motif,
+                self._target_graph,
+                limit=(self._limit + self._skip + 1)
+                if (self._skip and self._limit)
+                else None,
+            )
         return self._matches
 
     def entity_id(self, entity_id):
@@ -257,9 +262,7 @@ class _GrandCypherTransformer(Transformer):
         else:
             constraints = {}
         for key, val in constraints.items():
-            self._conditions.append(
-                (True, f"{node_name}.{key}", _OPERATORS["=="], val)
-            )
+            self._conditions.append((True, f"{node_name}.{key}", _OPERATORS["=="], val))
         return node_name
 
     def match_clause(self, match_clause: tuple):
