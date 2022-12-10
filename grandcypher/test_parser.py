@@ -347,3 +347,24 @@ class TestLimitSkip:
         host.add_edge("London", "NYC")
 
         assert len(GrandCypher(host).run(qry)["c"]) == 1
+
+    def test_null_node_attr(self):
+        """
+        Test that you can search for individual nodes with properties
+        """
+        host = nx.DiGraph()
+        host.add_node("London", type="City")
+
+        qry = """
+        MATCH (c)
+        WHERE c.type is NULL
+        RETURN c
+        """
+        assert len(GrandCypher(host).run(qry)["c"]) == 0
+
+        qry = """
+        MATCH (c)
+        WHERE c.name is NULL
+        RETURN c
+        """
+        assert len(GrandCypher(host).run(qry)["c"]) == 1
