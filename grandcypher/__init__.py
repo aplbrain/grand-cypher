@@ -11,7 +11,7 @@ import networkx as nx
 
 import grandiso
 
-from lark import Lark, Tree, Transformer
+from lark import Lark, Tree, Transformer, v_args
 
 
 _OPERATORS = {
@@ -25,6 +25,7 @@ _OPERATORS = {
     "<>": lambda x, y: x != y,
     "in": lambda x, y: x in y,
     "contains": lambda x, y: y in x,
+    "is": lambda x, y: x is y,
 }
 
 
@@ -49,6 +50,7 @@ condition           : entity_id op entity_id_or_value
 
 ?entity_id_or_value : entity_id
                     | value
+                    | "NULL"i -> null
 
 op                  : "==" -> op_eq
                     | "=" -> op_eq
@@ -57,6 +59,7 @@ op                  : "==" -> op_eq
                     | "<" -> op_lt
                     | ">="-> op_gte
                     | "<="-> op_lte
+                    | "is" -> op_is
 
 
 return_clause       : "return"i entity_id ("," entity_id)*
@@ -82,7 +85,9 @@ json_dict           : "{" json_rule ("," json_rule)* "}"
 
 
 key                 : CNAME
-value               : ESTRING | NUMBER
+?value              : ESTRING
+                    | NUMBER
+                    | "NULL"i -> null
 
 
 %import common.CNAME            -> CNAME
@@ -284,9 +289,9 @@ class _GrandCypherTransformer(Transformer):
             (entity_id, operator, value) = condition
             return (True, entity_id, operator, value)
 
-    def value(self, val):
-        (val,) = val
-        return eval(val.value)
+    null = lambda self, _: None
+    ESTRING = v_args(inline=True)(eval)
+    NUMBER = v_args(inline=True)(eval)
 
     def op(self, operator):
         return operator
@@ -308,6 +313,9 @@ class _GrandCypherTransformer(Transformer):
 
     def op_lte(self, _):
         return _OPERATORS["<="]
+    
+    def op_is(self, _):
+        return _OPERATORS["is"]
 
     def json_dict(self, tup):
         constraints = {}
