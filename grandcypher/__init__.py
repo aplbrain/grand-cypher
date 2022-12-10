@@ -313,6 +313,9 @@ class _GrandCypherTransformer(Transformer):
 
     def op_lte(self, _):
         return _OPERATORS["<="]
+    
+    def op_is(self, _):
+        return _OPERATORS["is"]
 
     def json_dict(self, tup):
         constraints = {}
