@@ -198,12 +198,26 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
 
+        qry = """
+        MATCH (A)<-[]-(B)
+        RETURN A
+        """
+
+        assert len(GrandCypher(host).run(qry)["A"]) == 3
+
     def test_single_edge_where(self):
         host = nx.DiGraph()
         host.add_edge("y", "z")
 
         qry = """
         MATCH (A)-[AB]->(B)
+        RETURN AB
+        """
+
+        assert len(GrandCypher(host).run(qry)["AB"]) == 1
+
+        qry = """
+        MATCH (A)<-[AB]-(B)
         RETURN AB
         """
 
@@ -280,7 +294,7 @@ class TestDictAttributes:
         host.add_edge("X", "Z", type="bar")
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
-    
+        
     def test_null_value(self):
         host = nx.DiGraph()
         host.add_node("x", foo="foo")
@@ -373,3 +387,27 @@ class TestLimitSkip:
         host.add_edge("London", "NYC")
 
         assert len(GrandCypher(host).run(qry)["c"]) == 1
+
+    def test_left_or_right_direction_with_where(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+
+        host.add_edge("x", "y", foo="bar")
+        host.add_edge("z", "y")
+
+        qry = """Match (A{name:"x"}) -[AB]-> (B) return B.name"""
+        res = GrandCypher(host).run(qry) 
+        assert len(res) == 1
+        assert list(res.values())[0] == ["y"]
+
+        qry = """Match (A{name:"y"}) <-[AB]- (B) return B.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 1
+        assert list(res.values())[0] == ["x", "z"]
+
+        qry = """Match (A{name:"y"}) <-[AB]- (B) where AB.foo == "bar" return B.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 1
+        assert list(res.values())[0] == ["x"]

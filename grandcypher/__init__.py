@@ -6,6 +6,7 @@ data/attribute or by structure, using the same language you'd use
 to search in a much larger graph database.
 
 """
+from multiprocessing.sharedctypes import Value
 from typing import Tuple, Dict, List
 import networkx as nx
 
@@ -40,7 +41,8 @@ query               : many_match_clause where_clause return_clause
 many_match_clause   : (match_clause)+
 
 
-match_clause        : "match"i node_match "-" edge_match "->" node_match
+match_clause        : "match"i node_match "-" right_edge_match "->" node_match
+                    | "match"i node_match "<-" left_edge_match "-" node_match
                     | "match"i node_match
 
 
@@ -77,8 +79,11 @@ skip_clause         : "skip"i NUMBER
 ?node_match         : "(" CNAME ")"
                     | "(" CNAME json_dict ")"
 
-?edge_match         : "[" CNAME "]"
-                    | "[]"
+?right_edge_match   : "[" CNAME "]" -> right_edge_match
+                    | "[]" -> right_edge_match
+
+?left_edge_match    : "[" CNAME "]" -> left_edge_match
+                    | "[]" -> left_edge_match
 
 json_dict           : "{" json_rule ("," json_rule)* "}"
 ?json_rule          : CNAME ":" value
@@ -258,8 +263,15 @@ class _GrandCypherTransformer(Transformer):
             return ".".join(entity_id)
         return entity_id.value
 
-    def edge_match(self, edge_name):
-        return edge_name
+    def right_edge_match(self, edge_name):
+        if not edge_name:
+            return ("", "r")
+        return (edge_name[0], "r")
+    
+    def left_edge_match(self, edge_name):
+        if not edge_name:
+            return ("", "l")
+        return (edge_name[0], "l")
 
     def node_match(self, node_name):
         if isinstance(node_name, list):
@@ -275,7 +287,14 @@ class _GrandCypherTransformer(Transformer):
             # This is just a node match:
             self._motif.add_node(match_clause[0].value)
             return
-        (u, g, v) = match_clause
+        (u, (g, d), v) = match_clause
+        if g and d == "r":
+            pass
+        elif g and d == "l":
+            u, v = v, u
+        elif g:
+            raise ValueError(f"Not support direction d={d!r}")
+
         if g:
             self._return_edges[g.value] = (u.value, v.value)
         self._motif.add_edge(u.value, v.value)
