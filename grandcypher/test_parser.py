@@ -152,6 +152,20 @@ class TestSimpleAPI:
         """
 
         assert len(GrandCypher(host).run(qry)["A"]) == 2
+    
+    def test_null_where(self):
+        host = nx.DiGraph()
+        host.add_node("x", foo="foo")
+        host.add_node("y")
+        host.add_node("z")
+
+        qry = """
+        MATCH (A)
+        WHERE A.foo is nUlL
+        RETURN A.foo
+        """
+        assert len(GrandCypher(host).run(qry)["A.foo"]) == 2
+
 
     def test_simple_api_multi_node_multi_where(self):
         host = nx.DiGraph()
@@ -266,6 +280,18 @@ class TestDictAttributes:
         host.add_edge("X", "Z", type="bar")
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
+    
+    def test_null_value(self):
+        host = nx.DiGraph()
+        host.add_node("x", foo="foo")
+        host.add_node("y")
+        host.add_node("z")
+
+        qry = """
+        MATCH (A{foo:NuLl})
+        RETURN A.foo
+        """
+        assert len(GrandCypher(host).run(qry)["A.foo"]) == 2
 
 
 class TestLimitSkip:
