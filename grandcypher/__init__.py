@@ -40,10 +40,7 @@ query               : many_match_clause where_clause return_clause
 many_match_clause   : (match_clause)+
 
 
-match_clause        : "match"i node_match "-" right_edge_match "->" node_match
-                    | "match"i node_match "<-" left_edge_match "-" node_match
-                    | "match"i node_match
-
+match_clause        : "match"i node_match (edge_match node_match)*
 
 where_clause        : "where"i condition ("and"i condition)*
 
@@ -60,7 +57,7 @@ op                  : "==" -> op_eq
                     | "<" -> op_lt
                     | ">="-> op_gte
                     | "<="-> op_lte
-                    | "is" -> op_is
+                    | "is"i -> op_is
 
 
 return_clause       : "return"i entity_id ("," entity_id)*
@@ -78,11 +75,14 @@ skip_clause         : "skip"i NUMBER
 ?node_match         : "(" CNAME ")"
                     | "(" CNAME json_dict ")"
 
-?right_edge_match   : "[" CNAME "]" -> right_edge_match
-                    | "[]" -> right_edge_match
+?edge_match         : right_edge_match
+                    | left_edge_match
 
-?left_edge_match    : "[" CNAME "]" -> left_edge_match
-                    | "[]" -> left_edge_match
+?right_edge_match   : "-[" CNAME "]->" -> right_edge_match
+                    | "-[]->" -> right_edge_match
+
+?left_edge_match    : "<-[" CNAME "]-" -> left_edge_match
+                    | "<-[]-" -> left_edge_match
 
 json_dict           : "{" json_rule ("," json_rule)* "}"
 ?json_rule          : CNAME ":" value
@@ -286,17 +286,19 @@ class _GrandCypherTransformer(Transformer):
             # This is just a node match:
             self._motif.add_node(match_clause[0].value)
             return
-        (u, (g, d), v) = match_clause
-        if g and d == "r":
-            pass
-        elif g and d == "l":
-            u, v = v, u
-        elif g:
-            raise ValueError(f"Not support direction d={d!r}")
+        for start in range(0, len(match_clause)-2, 2):
+            (u, (g, d), v) = match_clause[start:start+3]
+            if d == "r":
+                pass
+            elif d == "l":
+                u, v = v, u
+            else:
+                raise ValueError(f"Not support direction d={d!r}")
 
-        if g:
-            self._return_edges[g.value] = (u.value, v.value)
-        self._motif.add_edge(u.value, v.value)
+            if g:
+                self._return_edges[g.value] = (u.value, v.value)
+            self._motif.add_edge(u.value, v.value)
+
 
     def where_clause(self, where_clause: tuple):
         for clause in where_clause:
