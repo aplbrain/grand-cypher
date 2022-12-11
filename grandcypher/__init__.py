@@ -7,11 +7,13 @@ to search in a much larger graph database.
 
 """
 from typing import Tuple, Dict, List
+import random
+import string
 import networkx as nx
 
 import grandiso
 
-from lark import Lark, Tree, Transformer, v_args
+from lark import Lark, Tree, Transformer, v_args, Token
 
 
 _OPERATORS = {
@@ -71,12 +73,11 @@ return_clause       : "return"i entity_id ("," entity_id)*
 limit_clause        : "limit"i NUMBER
 skip_clause         : "skip"i NUMBER
 
-
+ 
 ?entity_id          : CNAME
                     | CNAME "." CNAME
 
-?node_match         : "(" CNAME ")"
-                    | "(" CNAME json_dict ")"
+node_match          : "(" (CNAME)? (json_dict)? ")"
 
 ?right_edge_match   : "[" CNAME "]" -> right_edge_match
                     | "[]" -> right_edge_match
@@ -106,6 +107,13 @@ key                 : CNAME
 )
 
 __version__ = "0.1.1"
+
+
+_ALPHABET = string.ascii_lowercase + string.digits
+
+
+def shortuuid(k=4) -> str:
+    return ''.join(random.choices(_ALPHABET, k=k))
 
 
 class _GrandCypherTransformer(Transformer):
@@ -273,10 +281,13 @@ class _GrandCypherTransformer(Transformer):
         return (edge_name[0], "l")
 
     def node_match(self, node_name):
-        if isinstance(node_name, list):
-            node_name, constraints = node_name
-        else:
-            constraints = {}
+        if not node_name:
+            node_name = [Token("CNAME", shortuuid()), {}]
+        elif len(node_name) == 1 and not isinstance(node_name[0], Token):
+            node_name = [Token("CNAME", shortuuid()), node_name[0]]
+        elif len(node_name) == 1:
+            node_name = [node_name[0], {}]
+        node_name, constraints = node_name
         for key, val in constraints.items():
             self._conditions.append((True, f"{node_name}.{key}", _OPERATORS["=="], val))
         return node_name
@@ -287,11 +298,11 @@ class _GrandCypherTransformer(Transformer):
             self._motif.add_node(match_clause[0].value)
             return
         (u, (g, d), v) = match_clause
-        if g and d == "r":
+        if d == "r":
             pass
-        elif g and d == "l":
+        elif d == "l":
             u, v = v, u
-        elif g:
+        else:
             raise ValueError(f"Not support direction d={d!r}")
 
         if g:
