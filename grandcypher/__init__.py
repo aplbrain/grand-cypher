@@ -248,13 +248,20 @@ class _GrandCypherTransformer(Transformer):
 
     def _get_structural_matches(self):
         if not self._matches:
-            self._matches = grandiso.find_motifs(
-                self._motif,
-                self._target_graph,
-                limit=(self._limit + self._skip + 1)
-                if (self._skip and self._limit)
-                else None,
-            )
+            matches = []
+            for motif in (self._motif.subgraph(c) for c in nx.weakly_connected_components(self._motif)):
+                _matches = grandiso.find_motifs(
+                    motif,
+                    self._target_graph,
+                    limit=(self._limit + self._skip + 1)
+                    if (self._skip and self._limit)
+                    else None,
+                )
+                if not matches:
+                    matches = _matches
+                elif _matches:
+                    matches = [{**a, **b} for a in matches for b in _matches]
+            self._matches = matches
         return self._matches
 
     def entity_id(self, entity_id):

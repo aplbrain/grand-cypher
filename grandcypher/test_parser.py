@@ -411,3 +411,18 @@ class TestLimitSkip:
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
         assert list(res.values())[0] == ["x"]
+
+    def test_disconected_multi_match(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        qry = """match (A) -[]-> (B) match (C) -[]-> (D) return A.name, B.name, C.name, D.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 4
+        assert res["A.name"] == ["x", "x", "y", "y"]
+        assert res["B.name"] == ["y", "y", "z", "z"]
+        assert res["C.name"] == ["x", "y", "x", "y"]
+        assert res["D.name"] == ["y", "z", "y", "z"]
