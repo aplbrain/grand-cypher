@@ -1,13 +1,25 @@
 # CHANGELOG
 
-### *??* (Unreleased)
+### **0.2.0** (December 12 2022)
 
-* Improves performance of the `limit` argument by offloading the result-limiting behavior to `grandiso`.
+> Lots of great new language support by @khaole88, thank you!!
 
-### 0.1.1 (October 1 2021)
+#### Performance
+
+-   Improves performance of the `limit` argument by offloading the result-limiting behavior to `grandiso`.
+
+#### Features
+
+-   Add behavior for disconnected matches of multiple graph components (#17, thanks @khaole88!)
+-   Add support for anonymous nodes (#16, thanks @khaole88!)
+-   Support chained edges like `(A)-[]->(B)-[]-(C)` (#15, thanks @khaole88!)
+-   Support backwards edges (#14, thanks @khaole88!)
+-   Support `NULL` and the `is` operator in queriy `WHERE` and property queries (#13, thanks @khaole88!)
+
+### **0.1.1** (October 1 2021)
 
 > This version adds support for node-only matches.
 
-### 0.1.0 (March 23 2021)
+### **0.1.0** (March 23 2021)
 
 > This version adds initial support for querying networkx-flavored graphs with the Cypher query language.

@@ -70,7 +70,7 @@ return_clause       : "return"i entity_id ("," entity_id)*
 limit_clause        : "limit"i NUMBER
 skip_clause         : "skip"i NUMBER
 
- 
+
 ?entity_id          : CNAME
                     | CNAME "." CNAME
 
@@ -106,14 +106,14 @@ key                 : CNAME
     start="start",
 )
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
 
 
 def shortuuid(k=4) -> str:
-    return ''.join(random.choices(_ALPHABET, k=k))
+    return "".join(random.choices(_ALPHABET, k=k))
 
 
 class _GrandCypherTransformer(Transformer):
@@ -246,7 +246,9 @@ class _GrandCypherTransformer(Transformer):
                 else:
                     raise IndexError(f"Entity {host_entity_id} not in graph.")
                 val = self._OP(
-                    operator, self._get_entity_from_host(*host_entity_id), value,
+                    operator,
+                    self._get_entity_from_host(*host_entity_id),
+                    value,
                 )
                 if val != should_be:
                     should_include = False
@@ -257,7 +259,10 @@ class _GrandCypherTransformer(Transformer):
     def _get_structural_matches(self):
         if not self._matches:
             matches = []
-            for motif in (self._motif.subgraph(c) for c in nx.weakly_connected_components(self._motif)):
+            for motif in (
+                self._motif.subgraph(c)
+                for c in nx.weakly_connected_components(self._motif)
+            ):
                 _matches = grandiso.find_motifs(
                     motif,
                     self._target_graph,
@@ -281,7 +286,7 @@ class _GrandCypherTransformer(Transformer):
         if not edge_name:
             return ("", "r")
         return (edge_name[0], "r")
-    
+
     def left_edge_match(self, edge_name):
         if not edge_name:
             return ("", "l")
@@ -304,8 +309,8 @@ class _GrandCypherTransformer(Transformer):
             # This is just a node match:
             self._motif.add_node(match_clause[0].value)
             return
-        for start in range(0, len(match_clause)-2, 2):
-            (u, (g, d), v) = match_clause[start:start+3]
+        for start in range(0, len(match_clause) - 2, 2):
+            (u, (g, d), v) = match_clause[start : start + 3]
             if d == "r":
                 pass
             elif d == "l":
@@ -350,7 +355,7 @@ class _GrandCypherTransformer(Transformer):
 
     def op_lte(self, _):
         return _OPERATORS["<="]
-    
+
     def op_is(self, _):
         return _OPERATORS["is"]
 

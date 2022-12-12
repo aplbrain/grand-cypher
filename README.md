@@ -49,8 +49,7 @@ G.nx.add_edge("B", "C")
 G.nx.add_edge("C", "A")
 
 GrandCypher(G.nx).run("""
-MATCH (A)-[]->(B)
-MATCH (B)-[]->(C)
+MATCH (A)-[]->(B)-[]->(C)
 MATCH (C)-[]->(A)
 WHERE
     A.foo == "bar"
@@ -61,24 +60,25 @@ RETURN
 
 # Feature Parity
 
-| Feature                                    | Support |     |
-| ------------------------------------------ | ------- | --- |
-| Multiple `MATCH` clauses                   | ✅      |     |
-| `WHERE`-clause filtering on nodes          | ✅      |     |
-| Anonymous `-[]-` edges                     | ✅      |     |
-| `LIMIT`                                    | ✅      |     |
-| `SKIP`                                     | ✅      |     |
-| Node/edge attributes with `{}` syntax      | ✅      |     |
-| `WHERE`-clause filtering on edges          | ✅      |     |
-| Named `-[]-` edges                         | ✅      |     |
-| Boolean Arithmetic (`AND`/`OR`)            | 🛣      |     |
-| `OPTIONAL MATCH`                           | 🛣       |     |
-| Chained `()-[]->()-[]->()` edges           | 🛣       |     |
-| Backwards `()<-[]-()` edges                | 🛣       |     |
-| Undirected `()-[]-()` edges                | 🛣       |     |
-| `(:Type)` node-types                       | 🛣       |     |
-| `[:Type]` edge-types                       | 🛣       |     |
-| Graph mutations (e.g. `DELETE`, `SET`,...) | 🔴      |     |
+| Feature                                    | Support              |     |
+| ------------------------------------------ | -------------------- | --- |
+| Multiple `MATCH` clauses                   | ✅                   |     |
+| `WHERE`-clause filtering on nodes          | ✅                   |     |
+| Anonymous `-[]-` edges                     | ✅                   |     |
+| `LIMIT`                                    | ✅                   |     |
+| `SKIP`                                     | ✅                   |     |
+| Node/edge attributes with `{}` syntax      | ✅                   |     |
+| `WHERE`-clause filtering on edges          | ✅                   |     |
+| Named `-[]-` edges                         | ✅                   |     |
+| Chained `()-[]->()-[]->()` edges           | ✅ Thanks @khaole88! |     |
+| Backwards `()<-[]-()` edges                | ✅ Thanks @khaole88! |     |
+| Anonymous `()` nodes                       | ✅ Thanks @khaole88! |     |
+| Boolean Arithmetic (`AND`/`OR`)            | 🛣                    |     |
+| `OPTIONAL MATCH`                           | 🛣                    |     |
+| Undirected `()-[]-()` edges                | 🛣                    |     |
+| `(:Type)` node-types                       | 🛣                    |     |
+| `[:Type]` edge-types                       | 🛣                    |     |
+| Graph mutations (e.g. `DELETE`, `SET`,...) | 🔴                   |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |
@@ -90,17 +90,17 @@ If this tool is helpful to your research, please consider citing it with:
 
 ```bibtex
 # https://doi.org/10.1038/s41598-021-91025-5
-@article{Matelsky_Motifs_2021, 
+@article{Matelsky_Motifs_2021,
     title={{DotMotif: an open-source tool for connectome subgraph isomorphism search and graph queries}},
-    volume={11}, 
-    ISSN={2045-2322}, 
-    url={http://dx.doi.org/10.1038/s41598-021-91025-5}, 
-    DOI={10.1038/s41598-021-91025-5}, 
-    number={1}, 
-    journal={Scientific Reports}, 
-    publisher={Springer Science and Business Media LLC}, 
+    volume={11},
+    ISSN={2045-2322},
+    url={http://dx.doi.org/10.1038/s41598-021-91025-5},
+    DOI={10.1038/s41598-021-91025-5},
+    number={1},
+    journal={Scientific Reports},
+    publisher={Springer Science and Business Media LLC},
     author={Matelsky, Jordan K. and Reilly, Elizabeth P. and Johnson, Erik C. and Stiso, Jennifer and Bassett, Danielle S. and Wester, Brock A. and Gray-Roncal, William},
-    year={2021}, 
+    year={2021},
     month={Jun}
 }
 ```
