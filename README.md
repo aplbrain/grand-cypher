@@ -70,12 +70,12 @@ RETURN
 | Node/edge attributes with `{}` syntax      | ✅                   |     |
 | `WHERE`-clause filtering on edges          | ✅                   |     |
 | Named `-[]-` edges                         | ✅                   |     |
-| Chained `()-[]->()-[]->()` edges           | ✅ Thanks @khaole88! |     |
-| Backwards `()<-[]-()` edges                | ✅ Thanks @khaole88! |     |
-| Anonymous `()` nodes                       | ✅ Thanks @khaole88! |     |
+| Chained `()-[]->()-[]->()` edges           | ✅ Thanks @khoale88! |     |
+| Backwards `()<-[]-()` edges                | ✅ Thanks @khoale88! |     |
+| Anonymous `()` nodes                       | ✅ Thanks @khoale88! |     |
+| Undirected `()-[]-()` edges                | ✅ Thanks @khoale88! |     |
 | Boolean Arithmetic (`AND`/`OR`)            | 🛣                    |     |
 | `OPTIONAL MATCH`                           | 🛣                    |     |
-| Undirected `()-[]-()` edges                | 🛣                    |     |
 | `(:Type)` node-types                       | 🛣                    |     |
 | `[:Type]` edge-types                       | 🛣                    |     |
 | Graph mutations (e.g. `DELETE`, `SET`,...) | 🔴                   |     |
