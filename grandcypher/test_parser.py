@@ -161,7 +161,7 @@ class TestSimpleAPI:
 
         qry = """
         MATCH (A)
-        WHERE A.foo is nUlL
+        WHERE A.foo iS nUlL
         RETURN A.foo
         """
         assert len(GrandCypher(host).run(qry)["A.foo"]) == 2
@@ -204,6 +204,29 @@ class TestSimpleAPI:
         """
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
+    
+    def test_simple_api_anonymous_node(self):
+        host = nx.DiGraph()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        host.add_edge("x", "z")
+
+        qry = """
+        MATCH () -[]-> (B)
+        RETURN B
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 1
+        assert list(res.values())[0] == ["y", "z", "z"]
+
+        qry = """
+        MATCH () <-[]- (B)
+        RETURN B
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 1
+        assert list(res.values())[0] == ["x", "x", "y"]
+        print(res)
 
     def test_single_edge_where(self):
         host = nx.DiGraph()
@@ -413,12 +436,6 @@ class TestLimitSkip:
         assert list(res.values())[0] == ["x"]
 
     def test_disconected_multi_match(self):
-        host = nx.DiGraph()
-        host.add_node("x", name="x")
-        host.add_node("y", name="y")
-        host.add_node("z", name="z")
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
         qry = """match (A) -[]-> (B) match (C) -[]-> (D) return A.name, B.name, C.name, D.name"""
         res = GrandCypher(host).run(qry)
         assert len(res) == 4
@@ -426,3 +443,89 @@ class TestLimitSkip:
         assert res["B.name"] == ["y", "y", "z", "z"]
         assert res["C.name"] == ["x", "y", "x", "y"]
         assert res["D.name"] == ["y", "z", "y", "z"]
+
+    def test_chained_edges(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+
+        qry = """Match (A{name:"x"}) -[]-> (B) -[]-> (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == ["x"]
+        assert res["B.name"] == ["y"]
+        assert res["C.name"] == ["z"]
+
+        qry = """Match (A{name:"y"}) -[]-> (B) -[]-> (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == []
+        assert res["B.name"] == []
+        assert res["C.name"] == []
+
+        qry = """Match (A) -[]-> (B{name:"y"}) -[]-> (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == ["x"]
+        assert res["B.name"] == ["y"]
+        assert res["C.name"] == ["z"]
+
+        qry = """Match (A) -[]-> (B) -[]-> (C) where B.name == "y" return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == ["x"]
+        assert res["B.name"] == ["y"]
+        assert res["C.name"] == ["z"]
+
+    def test_chained_backward_edges(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+        host.add_edge("x", "y")
+        host.add_edge("z", "y")
+
+        qry = """Match (A{name:"x"}) -[]-> (B) -[]-> (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == []
+        assert res["B.name"] == []
+        assert res["C.name"] == []
+
+        qry = """Match (A) -[]-> (B{name:"y"}) -[]-> (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == []
+        assert res["B.name"] == []
+        assert res["C.name"] == []
+
+        qry = """Match (A{name:"x"}) -[]-> (B) -[]-> (C) where B.name == "y" return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == []
+        assert res["B.name"] == []
+        assert res["C.name"] == []
+
+        qry = """Match (A{name:"x"}) -[]-> (B) <-[]- (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == ["x"]
+        assert res["B.name"] == ["y"]
+        assert res["C.name"] == ["z"]
+
+        qry = """Match (A) -[]-> (B{name:"y"}) <-[]- (C) return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == ["x", "z"]
+        assert res["B.name"] == ["y", "y"]
+        assert res["C.name"] == ["z", "x"]
+
+        qry = """Match (A) -[]-> (B) <-[]- (C) where C.name == "z" return A.name, B.name, C.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A.name"] == ["x"]
+        assert res["B.name"] == ["y"]
+        assert res["C.name"] == ["z"]
