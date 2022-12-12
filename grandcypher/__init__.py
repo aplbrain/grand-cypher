@@ -76,14 +76,12 @@ skip_clause         : "skip"i NUMBER
 
 node_match          : "(" (CNAME)? (json_dict)? ")"
 
-?edge_match         : right_edge_match
-                    | left_edge_match
+edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE? 
 
-?right_edge_match   : "-[" CNAME "]->" -> right_edge_match
-                    | "-[]->" -> right_edge_match
-
-?left_edge_match    : "<-[" CNAME "]-" -> left_edge_match
-                    | "<-[]-" -> left_edge_match
+LEFT_ANGLE          : "<"
+RIGHT_ANGLE         : ">"
 
 json_dict           : "{" json_rule ("," json_rule)* "}"
 ?json_rule          : CNAME ":" value
@@ -282,15 +280,30 @@ class _GrandCypherTransformer(Transformer):
             return ".".join(entity_id)
         return entity_id.value
 
-    def right_edge_match(self, edge_name):
-        if not edge_name:
-            return ("", "r")
-        return (edge_name[0], "r")
+    def edge_match(self, edge_name):
+        if len(edge_name) == 0:  # --
+            res = ("", "b")
+        elif len(edge_name) == 1:  # <--, -->, -CNAME-
+            edge_name = edge_name[0].value
+            if edge_name == "<":
+                res = ("", "l")
+            elif edge_name == ">":
+                res = ("", "r")
+            else:
+                res = (edge_name, "b")
+        elif len(edge_name) == 2:  # <-->, <-CNAME-, -CNAME->
+            edge_name = (edge_name[0].value, edge_name[1].value)
+            if edge_name == ("<", ">"):
+                res = ("", "b")
+            elif edge_name[0] == "<":
+                res = (edge_name[1], "l")
+            else:
+                res = (edge_name[0], "r")
+        else:  # <-CNAME->
+            res = (edge_name[1].value, "b")
 
-    def left_edge_match(self, edge_name):
-        if not edge_name:
-            return ("", "l")
-        return (edge_name[0], "l")
+        return (Token("CNAME", res[0]), res[1])
+
 
     def node_match(self, node_name):
         if not node_name:
@@ -312,15 +325,17 @@ class _GrandCypherTransformer(Transformer):
         for start in range(0, len(match_clause) - 2, 2):
             (u, (g, d), v) = match_clause[start : start + 3]
             if d == "r":
-                pass
+                edges = ((u.value, v.value),)
             elif d == "l":
-                u, v = v, u
+                edges = ((v.value, u.value),)
+            elif d == "b":
+                edges = ((u.value, v.value), (v.value, u.value))
             else:
                 raise ValueError(f"Not support direction d={d!r}")
 
             if g:
-                self._return_edges[g.value] = (u.value, v.value)
-            self._motif.add_edge(u.value, v.value)
+                self._return_edges[g.value] = edges[0]
+            self._motif.add_edges_from(edges)
 
     def where_clause(self, where_clause: tuple):
         for clause in where_clause:

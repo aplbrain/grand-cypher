@@ -536,3 +536,44 @@ class TestLimitSkip:
         assert res["A.name"] == ["x"]
         assert res["B.name"] == ["y"]
         assert res["C.name"] == ["z"]
+
+    def test_undirected(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+        host.add_edge("x", "y", foo="bar")
+        host.add_edge("y", "x")
+        host.add_edge("y", "z")
+
+        qry = """Match (A) -[]- (B) return A.name, B.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A.name"] == ["x", "y"]
+        assert res["B.name"] == ["y", "x"]
+
+        qry = """Match (A) <--> (B) return A.name, B.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A.name"] == ["x", "y"]
+        assert res["B.name"] == ["y", "x"]
+
+        qry = """Match (A) -[r]- (B) where r.foo == "bar" return A.name, B.name"""
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A.name"] == ["x"]
+        assert res["B.name"] == ["y"]
+    
+    def test_anonymous_node(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+
+        host.add_edge("x", "y")
+        host.add_edge("z", "y")
+
+        qry = """Match () -[]-> (B) <-[]- ()  return B.name"""
+        res = GrandCypher(host).run(qry) 
+        assert len(res) == 1
+        assert res["B.name"] == ["y", "y"]
