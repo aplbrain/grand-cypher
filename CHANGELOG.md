@@ -1,8 +1,14 @@
 # CHANGELOG
 
+### (Unreleased)
+
+#### Features
+
+-  Support for undirected edges (`(A)-[]-(B)`)
+
 ### **0.2.0** (December 12 2022)
 
-> Lots of great new language support by @khaole88, thank you!!
+> Lots of great new language support by @khoale88, thank you!!
 
 #### Performance
 
@@ -10,11 +16,11 @@
 
 #### Features
 
--   Add behavior for disconnected matches of multiple graph components (#17, thanks @khaole88!)
--   Add support for anonymous nodes (#16, thanks @khaole88!)
--   Support chained edges like `(A)-[]->(B)-[]-(C)` (#15, thanks @khaole88!)
--   Support backwards edges (#14, thanks @khaole88!)
--   Support `NULL` and the `is` operator in queriy `WHERE` and property queries (#13, thanks @khaole88!)
+-   Add behavior for disconnected matches of multiple graph components (#17, thanks @khoale88!)
+-   Add support for anonymous nodes (#16, thanks @khoale88!)
+-   Support chained edges like `(A)-[]->(B)-[]-(C)` (#15, thanks @khoale88!)
+-   Support backwards edges (#14, thanks @khoale88!)
+-   Support `NULL` and the `is` operator in queriy `WHERE` and property queries (#13, thanks @khoale88!)
 
 ### **0.1.1** (October 1 2021)
 
