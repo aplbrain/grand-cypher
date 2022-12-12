@@ -204,6 +204,29 @@ class TestSimpleAPI:
         """
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
+    
+    def test_simple_api_anonymous_node(self):
+        host = nx.DiGraph()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        host.add_edge("x", "z")
+
+        qry = """
+        MATCH () -[]-> (B)
+        RETURN B
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 1
+        assert list(res.values())[0] == ["y", "z", "z"]
+
+        qry = """
+        MATCH () <-[]- (B)
+        RETURN B
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 1
+        assert list(res.values())[0] == ["x", "x", "y"]
+        print(res)
 
     def test_single_edge_where(self):
         host = nx.DiGraph()
@@ -411,6 +434,21 @@ class TestLimitSkip:
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
         assert list(res.values())[0] == ["x"]
+
+    # def test_anonymous_node(self):
+    #     # TODO: enable when chained edges is supported
+    #     host = nx.DiGraph()
+    #     host.add_node("x", name="x")
+    #     host.add_node("y", name="y")
+    #     host.add_node("z", name="z")
+
+    #     host.add_edge("x", "y")
+    #     host.add_edge("z", "y")
+
+    #     qry = """Match () -[]-> (B) <-[]- ()  return B.name"""
+    #     res = GrandCypher(host).run(qry) 
+    #     assert len(res) == 1
+    #     assert res["B.name"] == ["y"]
 
     def test_chained_edges(self):
         host = nx.DiGraph()
