@@ -6,14 +6,14 @@ data/attribute or by structure, using the same language you'd use
 to search in a much larger graph database.
 
 """
-from typing import Tuple, Dict, List
+from typing import Dict, List, Callable
 import random
 import string
 import networkx as nx
 
 import grandiso
 
-from lark import Lark, Tree, Transformer, v_args, Token
+from lark import Lark, Transformer, v_args, Token
 
 
 _OPERATORS = {
@@ -44,7 +44,11 @@ many_match_clause   : (match_clause)+
 
 match_clause        : "match"i node_match (edge_match node_match)*
 
-where_clause        : "where"i condition ("and"i condition)*
+where_clause        : "where"i compound_condition
+
+compound_condition  : condition
+                    | "(" compound_condition boolean_arithmetic compound_condition ")"
+                    | compound_condition boolean_arithmetic compound_condition
 
 condition           : entity_id op entity_id_or_value
 
@@ -86,6 +90,8 @@ RIGHT_ANGLE         : ">"
 json_dict           : "{" json_rule ("," json_rule)* "}"
 ?json_rule          : CNAME ":" value
 
+boolean_arithmetic  : "and"i -> where_and
+                    | "OR"i -> where_or
 
 key                 : CNAME
 ?value              : ESTRING
@@ -114,10 +120,75 @@ def shortuuid(k=4) -> str:
     return "".join(random.choices(_ALPHABET, k=k))
 
 
+def _get_entity_from_host(host: nx.DiGraph, entity_name, entity_attribute=None):
+    if entity_name in host.nodes():
+        # We are looking for a node mapping in the target graph:
+        if entity_attribute:
+            # Get the correct entity from the target host graph,
+            # and then return the attribute:
+            return host.nodes[entity_name].get(entity_attribute, None)
+        else:
+            # Otherwise, just return the node from the host graph
+            return entity_name
+    else:
+        # looking for an edge:
+        edge_data = host.get_edge_data(*entity_name)
+        if not edge_data:
+            return (
+                None  # print(f"Nothing found for {entity_name} {entity_attribute}")
+            )
+        if entity_attribute:
+            # looking for edge attribute:
+            return edge_data.get(entity_attribute, None)
+        else:
+            return host.get_edge_data(*entity_name)
+
+
+CONDITION = Callable[[dict, nx.DiGraph, list], bool]
+
+
+def and_(cond_a, cond_b) -> CONDITION:
+    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
+        return cond_a(match, host, return_endges) and cond_b(match, host, return_endges)
+    return inner
+
+def or_(cond_a, cond_b):
+    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
+        return cond_a(match, host, return_endges) or cond_b(match, host, return_endges)
+    return inner
+
+def cond_(should_be, entity_id, operator, value) -> CONDITION:
+    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
+        host_entity_id = entity_id.split(".")
+        if host_entity_id[0] in match:
+            host_entity_id[0] = match[host_entity_id[0]]
+        elif host_entity_id[0] in return_endges:
+            # looking for edge...
+            edge_mapping = return_endges[host_entity_id[0]]
+            host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
+        else:
+            raise IndexError(f"Entity {host_entity_id} not in graph.")
+        try:
+            val = operator(_get_entity_from_host(host, *host_entity_id), value)
+        except:
+            val = False
+        if val != should_be:
+            return False
+        return True
+    return inner
+
+
+_BOOL_ARI = {
+    "and": and_,
+    "or": or_,
+}
+
+
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
         self._target_graph = target_graph
-        self._conditions = []
+        self._conditions: List[CONDITION] = []
+        self._where_condition: CONDITION = None
         self._motif = nx.DiGraph()
         self._matches = None
         self._return_requests = []
@@ -195,63 +266,18 @@ class _GrandCypherTransformer(Transformer):
             }
         return {r: self._lookup(r)[self._skip :] for r in self._return_requests}
 
-    def _get_entity_from_host(self, entity_name, entity_attribute=None):
-
-        if entity_name in self._target_graph.nodes():
-            # We are looking for a node mapping in the target graph:
-            if entity_attribute:
-                # Get the correct entity from the target host graph,
-                # and then return the attribute:
-                return self._target_graph.nodes[entity_name].get(entity_attribute, None)
-            else:
-                # Otherwise, just return the node from the host graph
-                return entity_name
-        else:
-            # looking for an edge:
-            edge_data = self._target_graph.get_edge_data(*entity_name)
-            if not edge_data:
-                return (
-                    None  # print(f"Nothing found for {entity_name} {entity_attribute}")
-                )
-            if entity_attribute:
-                # looking for edge attribute:
-                return edge_data.get(entity_attribute, None)
-            else:
-                return self._target_graph.get_edge_data(*entity_name)
-
-    def _OP(self, operator_string, left, right):
-        try:
-            return operator_string(left, right)
-        except:
-            # This means that the comparison failed.
-            return False
-
     def _get_true_matches(self):
         # filter the matches based upon the conditions of the where clause:
         # TODO: promote these to inside the monomorphism search
         actual_matches = []
         for match in self._get_structural_matches():
-            should_include = True
             for condition in self._conditions:
-                (should_be, entity_id, operator, value) = condition
-                host_entity_id = entity_id.split(".")
-                if host_entity_id[0] in match:
-                    host_entity_id[0] = match[host_entity_id[0]]
-                elif host_entity_id[0] in self._return_edges:
-                    # looking for edge...
-                    edge_mapping = self._return_edges[host_entity_id[0]]
-                    host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
-                else:
-                    raise IndexError(f"Entity {host_entity_id} not in graph.")
-                val = self._OP(
-                    operator,
-                    self._get_entity_from_host(*host_entity_id),
-                    value,
-                )
-                if val != should_be:
-                    should_include = False
-            if should_include:
-                actual_matches.append(match)
+                if not condition(match, self._target_graph, self._return_edges):
+                    break
+            else:
+                if (not self._where_condition or
+                    self._where_condition(match, self._target_graph, self._return_edges)):
+                    actual_matches.append(match)
         return actual_matches
 
     def _get_structural_matches(self):
@@ -314,7 +340,8 @@ class _GrandCypherTransformer(Transformer):
             node_name = [node_name[0], {}]
         node_name, constraints = node_name
         for key, val in constraints.items():
-            self._conditions.append((True, f"{node_name}.{key}", _OPERATORS["=="], val))
+            cond = cond_(True, f"{node_name}.{key}", _OPERATORS["=="], val)
+            self._conditions.append(cond)
         return node_name
 
     def match_clause(self, match_clause: tuple):
@@ -338,8 +365,22 @@ class _GrandCypherTransformer(Transformer):
             self._motif.add_edges_from(edges)
 
     def where_clause(self, where_clause: tuple):
-        for clause in where_clause:
-            self._conditions.append(clause)
+        self._where_condition = where_clause[0]
+    
+    def compound_condition(self, val):
+        if len(val) == 1:
+            val = cond_(*val[0])
+        else:  # len == 3
+            compound_a, operator, compound_b = val
+            val = operator(compound_a, compound_b)
+        return val
+
+    def where_and(self, val):
+        return _BOOL_ARI["and"]
+
+    
+    def where_or(self, val):
+        return _BOOL_ARI["or"]
 
     def condition(self, condition):
         if len(condition) == 3:
