@@ -135,7 +135,7 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
-    def test_simple_api_single_node_multi_where(self):
+    def test_simple_api_single_node_multi_where_2(self):
         host = nx.DiGraph()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
@@ -577,3 +577,21 @@ class TestLimitSkip:
         res = GrandCypher(host).run(qry) 
         assert len(res) == 1
         assert res["B.name"] == ["y", "y"]
+
+    def test_complex_where(self):
+        host = nx.DiGraph()
+        host.add_node("x", foo=12)
+        host.add_node("y", foo=13)
+        host.add_node("z", foo=16)
+        host.add_edge("x", "y", bar="1")
+        host.add_edge("y", "z", bar="2")
+        host.add_edge("z", "x", bar="3")
+        qry = """
+        MATCH (A)-[X]->(B)
+        WHERE A.foo == 12 Or (B.foo>13 aNd X.bar>="2")
+        RETURN A, B
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y"]
+        assert res["B"] == ["y", "z"]
