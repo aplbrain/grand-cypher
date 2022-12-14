@@ -74,11 +74,11 @@ RETURN
 | Backwards `()<-[]-()` edges                | ✅ Thanks @khoale88! |     |
 | Anonymous `()` nodes                       | ✅ Thanks @khoale88! |     |
 | Undirected `()-[]-()` edges                | ✅ Thanks @khoale88! |     |
-| Boolean Arithmetic (`AND`/`OR`)            | 🛣                    |     |
+| Boolean Arithmetic (`AND`/`OR`)            | ✅ Thanks @khoale88! |     |
 | `OPTIONAL MATCH`                           | 🛣                    |     |
 | `(:Type)` node-types                       | 🛣                    |     |
 | `[:Type]` edge-types                       | 🛣                    |     |
-| Graph mutations (e.g. `DELETE`, `SET`,...) | 🔴                   |     |
+| Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                    |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |

@@ -1,10 +1,17 @@
 # CHANGELOG
 
-### (Unreleased)
+### **0.3.0** (December 14 2022)
+
+> This version adds support for boolean arithmetic with AND/OR, and other language features.
 
 #### Features
 
--  Support for undirected edges (`(A)-[]-(B)`)
+-   Support for boolean arithmetic with AND/OR (#20, thanks @khoale88!)
+-   Support for undirected edges (`(A)-[]-(B)`)
+
+#### Housekeeping
+
+-   Add install dependencies to `setup.py`
 
 ### **0.2.0** (December 12 2022)
 
