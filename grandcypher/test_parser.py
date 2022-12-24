@@ -595,3 +595,72 @@ class TestLimitSkip:
         assert len(res) == 2
         assert res["A"] == ["x", "y"]
         assert res["B"] == ["y", "z"]
+
+
+class TestVariableLengthRelationship:
+    def test_single_variable_length_relationship(self):
+        host = nx.DiGraph()
+        host.add_node("x", foo=12)
+        host.add_node("y", foo=13)
+        host.add_node("z", foo=16)
+        host.add_edge("x", "y", bar="1")
+        host.add_edge("y", "z", bar="2")
+        host.add_edge("z", "x", bar="3")
+
+        qry = """
+        MATCH (A)-[r*0]->(B)
+        RETURN A, B, r
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["x", "y", "z"]
+        assert res["r"] == [None, None, None]
+
+        qry = """
+        MATCH (A)-[r*1]->(B)
+        RETURN A, B, r
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["y", "z", "x"]
+        assert res["r"] == [{"bar": "1"}, {"bar": "2"}, {"bar": "3"}]
+
+        qry = """
+        MATCH (A)-[r*2]->(B)
+        RETURN A, B, r
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["z", "x", "y"]
+        assert res["r"] == [
+            [{"bar": "1"}, {"bar": "2"}], [{"bar": "2"}, {"bar": "3"}], [{"bar": "3"}, {"bar": "1"}]]
+
+
+    def test_complex_variable_length_relationship(self):
+        host = nx.DiGraph()
+        host.add_node("x", foo=12)
+        host.add_node("y", foo=13)
+        host.add_node("z", foo=16)
+        host.add_edge("x", "y", bar="1")
+        host.add_edge("y", "z", bar="2")
+        host.add_edge("z", "x", bar="3")
+
+        qry = """
+        MATCH (A)-[r*0..2]->(B)
+        RETURN A, B, r
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["r"] == [
+            None, None, None, 
+            {"bar": "1"}, {"bar": "2"}, {"bar": "3"}, 
+            [{"bar": "1"}, {"bar": "2"}], [{"bar": "2"}, {"bar": "3"}], [{"bar": "3"}, {"bar": "1"}]]
