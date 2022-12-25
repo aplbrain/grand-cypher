@@ -163,9 +163,7 @@ def _is_node_attr_match(
             if val and val - host_node.get("__type__", set()):
                 return False
             continue
-        if attr not in host_node:
-            return False
-        if host_node[attr] != val:
+        if host_node.get(attr) != val:
             return False
 
     return True
@@ -200,9 +198,7 @@ def _is_edge_attr_match(
             if val and val - host_edge.get("__type__", set()):
                 return False
             continue
-        if attr not in host_edge:
-            return False
-        if host_edge[attr] != val:
+        if host_edge.get(attr) != val:
             return False
 
     return True
@@ -281,7 +277,6 @@ _BOOL_ARI = {
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
         self._target_graph = target_graph
-        self._conditions: List[CONDITION] = []
         self._where_condition: CONDITION = None
         self._motif = nx.DiGraph()
         self._matches = None
@@ -360,13 +355,9 @@ class _GrandCypherTransformer(Transformer):
         # TODO: promote these to inside the monomorphism search
         actual_matches = []
         for match, match_path in self._get_structural_matches():
-            for condition in self._conditions:
-                if not condition(match, self._target_graph, self._return_edges):
-                    break
-            else:
-                if (not self._where_condition or
-                    self._where_condition(match, self._target_graph, self._return_edges)):
-                    actual_matches.append((match, match_path))
+            if (not self._where_condition or
+                self._where_condition(match, self._target_graph, self._return_edges)):
+                actual_matches.append((match, match_path))
         return actual_matches
 
     def _get_structural_matches(self):
@@ -425,8 +416,8 @@ class _GrandCypherTransformer(Transformer):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
                 new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __type__ = edge_type)
-                new_motif.add_node(u, __type__=motif.nodes[u]["__type__"])
-                new_motif.add_node(v, __type__=motif.nodes[v]["__type__"])
+                new_motif.add_node(u, **motif.nodes[u])
+                new_motif.add_node(v, **motif.nodes[v])
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
                 hops.append(shortuuid())
             motifs = self._product_motifs(motifs, new_motifs)
@@ -488,19 +479,17 @@ class _GrandCypherTransformer(Transformer):
         cname = cname or Token("CNAME", shortuuid())
         json_data = json_data or {}
         node_type = set([node_type]) if node_type else set()
-        for key, val in json_data.items():
-            cond = cond_(True, f"{cname}.{key}", _OPERATORS["=="], val)
-            self._conditions.append(cond)
-        return (cname, node_type)
+
+        return (cname, node_type, json_data)
 
     def match_clause(self, match_clause: Tuple):
         if len(match_clause) == 1:
             # This is just a node match:
-            u, ut = match_clause[0]
-            self._motif.add_node(u.value, __type__ = ut)
+            u, ut, js = match_clause[0]
+            self._motif.add_node(u.value, __type__ = ut, **js)
             return
         for start in range(0, len(match_clause) - 2, 2):
-            ((u, ut), (g, t, d, minh, maxh), (v, vt)) = match_clause[start : start + 3]
+            ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[start : start + 3]
             if d == "r":
                 edges = ((u.value, v.value),)
             elif d == "l":
@@ -523,8 +512,8 @@ class _GrandCypherTransformer(Transformer):
             self._motif.add_edges_from(
                 edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __type__ = t)
             
-            self._motif.add_node(u, __type__=ut)
-            self._motif.add_node(v, __type__=vt)
+            self._motif.add_node(u, __type__=ut, **ujs)
+            self._motif.add_node(v, __type__=vt, **vjs)
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]
