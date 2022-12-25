@@ -692,9 +692,9 @@ class TestType():
         host.add_node("x")
         host.add_node("y")
         host.add_node("z")
-        host.add_edge("x", "y", __type__={"Edge", "XY"}, bar="1")
-        host.add_edge("y", "z", __type__={"Edge", "YZ"}, bar="2")
-        host.add_edge("z", "x", __type__={"Edge", "ZX"}, bar="3")
+        host.add_edge("x", "y", __labels__={"Edge", "XY"}, bar="1")
+        host.add_edge("y", "z", __labels__={"Edge", "YZ"}, bar="2")
+        host.add_edge("z", "x", __labels__={"Edge", "ZX"}, bar="3")
 
         qry = """
         MATCH (A)-[:XY]->(B)
@@ -732,9 +732,9 @@ class TestType():
         host.add_node("x")
         host.add_node("y")
         host.add_node("z")
-        host.add_edge("x", "y", __type__={"Edge", "XY"})
-        host.add_edge("y", "z", __type__={"Edge", "YZ"})
-        host.add_edge("z", "x", __type__={"Edge", "ZX"})
+        host.add_edge("x", "y", __labels__={"Edge", "XY"})
+        host.add_edge("y", "z", __labels__={"Edge", "YZ"})
+        host.add_edge("z", "x", __labels__={"Edge", "ZX"})
 
         qry = """
         MATCH (A)-[:XY*2]->(B)
@@ -768,8 +768,8 @@ class TestType():
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert res["r"] == [
             [None], [None], [None],
-            [{'__type__': {'Edge', 'XY'}}], [{'__type__': {'Edge', 'YZ'}}], [{'__type__': {'Edge', 'ZX'}}],
-            [{'__type__': {'Edge', 'XY'}}, {'__type__': {'Edge', 'YZ'}}], [{'__type__': {'Edge', 'YZ'}}, {'__type__': {'Edge', 'ZX'}}], [{'__type__': {'Edge', 'ZX'}}, {'__type__': {'Edge', 'XY'}}]
+            [{'__labels__': {'Edge', 'XY'}}], [{'__labels__': {'Edge', 'YZ'}}], [{'__labels__': {'Edge', 'ZX'}}],
+            [{'__labels__': {'Edge', 'XY'}}, {'__labels__': {'Edge', 'YZ'}}], [{'__labels__': {'Edge', 'YZ'}}, {'__labels__': {'Edge', 'ZX'}}], [{'__labels__': {'Edge', 'ZX'}}, {'__labels__': {'Edge', 'XY'}}]
         ]
 
     def test_host_no_node_type(self):
@@ -793,9 +793,9 @@ class TestType():
 
     def test_node_type(self):
         host = nx.DiGraph()
-        host.add_node("x", __type__ = set(["Node", "X"]), foo="1")
-        host.add_node("y", __type__ = set(["Node", "Y"]), foo="2")
-        host.add_node("z", __type__ = set(["Node", "Z"]), foo="3")
+        host.add_node("x", __labels__ = set(["Node", "X"]), foo="1")
+        host.add_node("y", __labels__ = set(["Node", "Y"]), foo="2")
+        host.add_node("z", __labels__ = set(["Node", "Z"]), foo="3")
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")

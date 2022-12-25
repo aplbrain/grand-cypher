@@ -159,8 +159,8 @@ def _is_node_attr_match(
     host_node = host.nodes[host_node_id]
 
     for attr, val in motif_node.items():
-        if attr == '__type__':
-            if val and val - host_node.get("__type__", set()):
+        if attr == '__labels__':
+            if val and val - host_node.get("__labels__", set()):
                 return False
             continue
         if host_node.get(attr) != val:
@@ -178,7 +178,7 @@ def _is_edge_attr_match(
 ) -> bool:
     """
     Check if an edge in the host graph matches the attributes in the motif.
-    This also check the __type__ of edges.
+    This also check the __labels__ of edges.
 
     Arguments:
         motif_edge_id (str): The motif edge ID
@@ -194,8 +194,8 @@ def _is_edge_attr_match(
     host_edge = host.edges[host_edge_id]
 
     for attr, val in motif_edge.items():
-        if attr == '__type__':
-            if val and val - host_edge.get("__type__", set()):
+        if attr == '__labels__':
+            if val and val - host_edge.get("__labels__", set()):
                 return False
             continue
         if host_edge.get(attr) != val:
@@ -403,7 +403,7 @@ class _GrandCypherTransformer(Transformer):
             new_motifs = []
             min_hop = motif.edges[u, v]["__min_hop__"]
             max_hop = motif.edges[u, v]["__max_hop__"]
-            edge_type = motif.edges[u, v]["__type__"]
+            edge_type = motif.edges[u, v]["__labels__"]
             hops = []
             if min_hop == 0:
                 new_motif = nx.DiGraph()
@@ -415,7 +415,7 @@ class _GrandCypherTransformer(Transformer):
             for i in range(max(min_hop, 1), max_hop):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
-                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __type__ = edge_type)
+                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __labels__ = edge_type)
                 new_motif.add_node(u, **motif.nodes[u])
                 new_motif.add_node(v, **motif.nodes[v])
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
@@ -486,7 +486,7 @@ class _GrandCypherTransformer(Transformer):
         if len(match_clause) == 1:
             # This is just a node match:
             u, ut, js = match_clause[0]
-            self._motif.add_node(u.value, __type__ = ut, **js)
+            self._motif.add_node(u.value, __labels__ = ut, **js)
             return
         for start in range(0, len(match_clause) - 2, 2):
             ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[start : start + 3]
@@ -510,10 +510,10 @@ class _GrandCypherTransformer(Transformer):
             if t:
                 t = set([t])
             self._motif.add_edges_from(
-                edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __type__ = t)
+                edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __labels__ = t)
             
-            self._motif.add_node(u, __type__=ut, **ujs)
-            self._motif.add_node(v, __type__=vt, **vjs)
+            self._motif.add_node(u, __labels__=ut, **ujs)
+            self._motif.add_node(v, __labels__=vt, **vjs)
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]
