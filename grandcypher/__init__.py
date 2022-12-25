@@ -9,6 +9,7 @@ to search in a much larger graph database.
 from typing import Dict, List, Callable, Tuple
 import random
 import string
+from functools import lru_cache
 import networkx as nx
 
 import grandiso
@@ -83,6 +84,8 @@ node_match          : "(" (CNAME)? (json_dict)? ")"
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE? 
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "]-" RIGHT_ANGLE? 
+                    | LEFT_ANGLE? "-[" ":" TYPE "]-" RIGHT_ANGLE? 
                     | LEFT_ANGLE? "-[" "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
@@ -93,6 +96,7 @@ LEFT_ANGLE          : "<"
 RIGHT_ANGLE         : ">"
 MIN_HOP             : INT
 MAX_HOP             : INT
+TYPE                : CNAME
 
 json_dict           : "{" json_rule ("," json_rule)* "}"
 ?json_rule          : CNAME ":" value
@@ -126,6 +130,43 @@ _ALPHABET = string.ascii_lowercase + string.digits
 
 def shortuuid(k=4) -> str:
     return "".join(random.choices(_ALPHABET, k=k))
+
+
+@lru_cache()
+def _is_edge_attr_match(
+    motif_edge_id: Tuple[str, str],
+    host_edge_id: Tuple[str, str],
+    motif: nx.Graph,
+    host: nx.Graph,
+) -> bool:
+    """
+    Check if an edge in the host graph matches the attributes in the motif.
+    This also check the __type__ of edges.
+
+    Arguments:
+        motif_edge_id (str): The motif edge ID
+        host_edge_id (str): The host edge ID
+        motif (nx.Graph): The motif graph
+        host (nx.Graph): The host graph
+
+    Returns:
+        bool: True if the host edge matches the attributes in the motif
+
+    """
+    motif_edge = motif.edges[motif_edge_id]
+    host_edge = host.edges[host_edge_id]
+
+    for attr, val in motif_edge.items():
+        if attr == '__type__':
+            if val and val - host_edge.get("__type__", set()):
+                return False
+            continue
+        if attr not in host_edge:
+            return False
+        if host_edge[attr] != val:
+            return False
+
+    return True
 
 
 def _get_entity_from_host(host: nx.DiGraph, entity_name, entity_attribute=None):
@@ -237,10 +278,10 @@ class _GrandCypherTransformer(Transformer):
             if data_path in self._return_edges:
                 mapping_u, mapping_v = self._return_edges[data_path]
                 # We are looking for an edge mapping in the target graph:
-
+                is_hop = self._motif.edges[(mapping_u, mapping_v)]["__is_hop__"]
                 ret = (_get_edge(self._target_graph, mapping, match_path,mapping_u, mapping_v)
                        for mapping, match_path in self._get_true_matches())
-                ret = (r[0] if len (r) == 1 else r for r in ret)
+                ret = (r[0] if is_hop else r for r in ret)
                 # we keep the original list if len > 2 (edge hop 2+)
                 
                 if entity_attribute:
@@ -305,6 +346,7 @@ class _GrandCypherTransformer(Transformer):
                         limit=(self._limit + self._skip + 1)
                         if (self._skip and self._limit)
                         else None,
+                        is_edge_attr_match=_is_edge_attr_match
                     )
                     if not matches:
                         matches = _matches
@@ -330,6 +372,7 @@ class _GrandCypherTransformer(Transformer):
             new_motifs = []
             min_hop = motif.edges[u, v]["__min_hop__"]
             max_hop = motif.edges[u, v]["__max_hop__"]
+            edge_type = motif.edges[u, v]["__type__"]
             hops = []
             if min_hop == 0:
                 new_motif = nx.DiGraph()
@@ -341,7 +384,7 @@ class _GrandCypherTransformer(Transformer):
             for i in range(max(min_hop, 1), max_hop):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
-                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])))
+                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __type__ = edge_type)
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
                 hops.append(shortuuid())
             motifs = self._product_motifs(motifs, new_motifs)
@@ -355,8 +398,8 @@ class _GrandCypherTransformer(Transformer):
                 motif = nx.DiGraph()
                 motif.add_nodes_from(motif_1.nodes)
                 motif.add_nodes_from(motif_2.nodes)
-                motif.add_edges_from(motif_1.edges)
-                motif.add_edges_from(motif_2.edges)
+                motif.add_edges_from(motif_1.edges.data())
+                motif.add_edges_from(motif_2.edges.data())
                 new_motifs.append((motif, {**mapping_1, **mapping_2}))
         return new_motifs
         
@@ -367,7 +410,7 @@ class _GrandCypherTransformer(Transformer):
         return entity_id.value
 
     def edge_match(self, edge_name):
-        direction = cname = min_hop = max_hop = None
+        direction = cname = min_hop = max_hop = edge_type = None
 
         for token in edge_name:
             if token.type == "MIN_HOP":
@@ -380,18 +423,16 @@ class _GrandCypherTransformer(Transformer):
                 direction = "b"
             elif token.type == "RIGHT_ANGLE":
                 direction = "r"
+            elif token.type == "TYPE":
+                edge_type = token.value
             else:
                 cname = token
 
         direction = direction if direction is not None else "b"
         if (min_hop is not None or max_hop is not None) and (direction == "b"):
             raise TypeError("not support edge hopping for bidirectional edge")
-        min_hop = min_hop if min_hop is not None else 1
-        max_hop = max_hop if max_hop is not None else min_hop + 1
-        if max_hop > self._max_hop:
-            raise ValueError(f"max hop is caped at 100, found {max_hop}!")
 
-        return (cname, direction, min_hop, max_hop)
+        return (cname, edge_type, direction, min_hop, max_hop)
 
     def node_match(self, node_name):
         if not node_name:
@@ -412,7 +453,7 @@ class _GrandCypherTransformer(Transformer):
             self._motif.add_node(match_clause[0].value)
             return
         for start in range(0, len(match_clause) - 2, 2):
-            (u, (g, d, minh, maxh), v) = match_clause[start : start + 3]
+            (u, (g, t, d, minh, maxh), v) = match_clause[start : start + 3]
             if d == "r":
                 edges = ((u.value, v.value),)
             elif d == "l":
@@ -424,7 +465,17 @@ class _GrandCypherTransformer(Transformer):
 
             if g:
                 self._return_edges[g.value] = edges[0]
-            self._motif.add_edges_from(edges, __min_hop__ = minh, __max_hop__ = maxh)
+            
+            ish = minh is None and maxh is None
+            minh = minh if minh is not None else 1
+            maxh = maxh if maxh is not None else minh + 1
+            if maxh > self._max_hop:
+                raise ValueError(f"max hop is caped at 100, found {maxh}!")
+            if t:
+                t = set([t])
+
+            self._motif.add_edges_from(
+                edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __type__ = t)
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]

@@ -616,7 +616,7 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["x", "y", "z"]
-        assert res["r"] == [None, None, None]
+        assert res["r"] == [[None], [None], [None]]
 
         qry = """
         MATCH (A)-[r*1]->(B)
@@ -627,7 +627,7 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["y", "z", "x"]
-        assert res["r"] == [{"bar": "1"}, {"bar": "2"}, {"bar": "3"}]
+        assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
 
         qry = """
         MATCH (A)-[r*2]->(B)
@@ -661,6 +661,68 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert res["r"] == [
-            None, None, None, 
-            {"bar": "1"}, {"bar": "2"}, {"bar": "3"}, 
+            [None], [None], [None], 
+            [{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}], 
             [{"bar": "1"}, {"bar": "2"}], [{"bar": "2"}, {"bar": "3"}], [{"bar": "3"}, {"bar": "1"}]]
+
+
+class TestType():
+
+    def test_host_no_edge_type(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y", bar="1")
+        host.add_edge("y", "z", bar="2")
+        host.add_edge("z", "x", bar="3")
+
+        qry = """
+        MATCH (A)-[:A]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == []
+        assert res["B"] == []
+
+    def test_edge_type(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y", __type__={"Edge", "XY"}, bar="1")
+        host.add_edge("y", "z", __type__={"Edge", "YZ"}, bar="2")
+        host.add_edge("z", "x", __type__={"Edge", "ZX"}, bar="3")
+
+        qry = """
+        MATCH (A)-[:XY]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x"]
+        assert res["B"] == ["y"]
+
+        qry = """
+        MATCH (A)-[:Edge]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["y", "z", "x"]
+
+        qry = """
+        MATCH (A)-[r:Edge]->(B)
+        where r.bar == "2"
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["y"]
+        assert res["B"] == ["z"]
