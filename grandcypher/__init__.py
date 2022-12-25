@@ -80,6 +80,7 @@ skip_clause         : "skip"i NUMBER
                     | CNAME "." CNAME
 
 node_match          : "(" (CNAME)? (json_dict)? ")"
+                    | "(" (CNAME)? ":" TYPE (json_dict)? ")"
 
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
@@ -135,6 +136,39 @@ _ALPHABET = string.ascii_lowercase + string.digits
 
 def shortuuid(k=4) -> str:
     return "".join(random.choices(_ALPHABET, k=k))
+
+
+@lru_cache()
+def _is_node_attr_match(
+    motif_node_id: str, host_node_id: str, motif: nx.Graph, host: nx.Graph
+) -> bool:
+    """
+    Check if a node in the host graph matches the attributes in the motif.
+
+    Arguments:
+        motif_node_id (str): The motif node ID
+        host_node_id (str): The host graph ID
+        motif (nx.Graph): The motif graph
+        host (nx.Graph): The host graph
+
+    Returns:
+        bool: True if the host node matches the attributes in the motif
+
+    """
+    motif_node = motif.nodes[motif_node_id]
+    host_node = host.nodes[host_node_id]
+
+    for attr, val in motif_node.items():
+        if attr == '__type__':
+            if val and val - host_node.get("__type__", set()):
+                return False
+            continue
+        if attr not in host_node:
+            return False
+        if host_node[attr] != val:
+            return False
+
+    return True
 
 
 @lru_cache()
@@ -351,6 +385,7 @@ class _GrandCypherTransformer(Transformer):
                         limit=(self._limit + self._skip + 1)
                         if (self._skip and self._limit)
                         else None,
+                        is_node_attr_match=_is_node_attr_match,
                         is_edge_attr_match=_is_edge_attr_match
                     )
                     if not matches:
@@ -371,7 +406,7 @@ class _GrandCypherTransformer(Transformer):
         new_motif = nx.DiGraph()
         for n in motif.nodes:
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
-                new_motif.add_node(n)
+                new_motif.add_node(n, **motif.nodes[n])
         motifs = [(new_motif, {})]
         for u, v in motif.edges:
             new_motifs = []
@@ -390,6 +425,8 @@ class _GrandCypherTransformer(Transformer):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
                 new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __type__ = edge_type)
+                new_motif.add_node(u, __type__=motif.nodes[u]["__type__"])
+                new_motif.add_node(v, __type__=motif.nodes[v]["__type__"])
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
                 hops.append(shortuuid())
             motifs = self._product_motifs(motifs, new_motifs)
@@ -401,8 +438,8 @@ class _GrandCypherTransformer(Transformer):
         for motif_1, mapping_1 in motifs_1:
             for motif_2, mapping_2 in motifs_2:
                 motif = nx.DiGraph()
-                motif.add_nodes_from(motif_1.nodes)
-                motif.add_nodes_from(motif_2.nodes)
+                motif.add_nodes_from(motif_1.nodes.data())
+                motif.add_nodes_from(motif_2.nodes.data())
                 motif.add_edges_from(motif_1.edges.data())
                 motif.add_edges_from(motif_2.edges.data())
                 new_motifs.append((motif, {**mapping_1, **mapping_2}))
@@ -440,25 +477,30 @@ class _GrandCypherTransformer(Transformer):
         return (cname, edge_type, direction, min_hop, max_hop)
 
     def node_match(self, node_name):
-        if not node_name:
-            node_name = [Token("CNAME", shortuuid()), {}]
-        elif len(node_name) == 1 and not isinstance(node_name[0], Token):
-            node_name = [Token("CNAME", shortuuid()), node_name[0]]
-        elif len(node_name) == 1:
-            node_name = [node_name[0], {}]
-        node_name, constraints = node_name
-        for key, val in constraints.items():
-            cond = cond_(True, f"{node_name}.{key}", _OPERATORS["=="], val)
+        cname = node_type = json_data = None
+        for token in node_name:
+            if not isinstance(token, Token):
+                json_data = token
+            elif token.type == "CNAME":
+                cname = token
+            elif token.type == "TYPE":
+                node_type = token
+        cname = cname or Token("CNAME", shortuuid())
+        json_data = json_data or {}
+        node_type = set([node_type]) if node_type else set()
+        for key, val in json_data.items():
+            cond = cond_(True, f"{cname}.{key}", _OPERATORS["=="], val)
             self._conditions.append(cond)
-        return node_name
+        return (cname, node_type)
 
     def match_clause(self, match_clause: Tuple):
         if len(match_clause) == 1:
             # This is just a node match:
-            self._motif.add_node(match_clause[0].value)
+            u, ut = match_clause[0]
+            self._motif.add_node(u.value, __type__ = ut)
             return
         for start in range(0, len(match_clause) - 2, 2):
-            (u, (g, t, d, minh, maxh), v) = match_clause[start : start + 3]
+            ((u, ut), (g, t, d, minh, maxh), (v, vt)) = match_clause[start : start + 3]
             if d == "r":
                 edges = ((u.value, v.value),)
             elif d == "l":
@@ -467,7 +509,7 @@ class _GrandCypherTransformer(Transformer):
                 edges = ((u.value, v.value), (v.value, u.value))
             else:
                 raise ValueError(f"Not support direction d={d!r}")
-
+            
             if g:
                 self._return_edges[g.value] = edges[0]
             
@@ -478,9 +520,11 @@ class _GrandCypherTransformer(Transformer):
                 raise ValueError(f"max hop is caped at 100, found {maxh}!")
             if t:
                 t = set([t])
-
             self._motif.add_edges_from(
                 edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __type__ = t)
+            
+            self._motif.add_node(u, __type__=ut)
+            self._motif.add_node(v, __type__=vt)
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]

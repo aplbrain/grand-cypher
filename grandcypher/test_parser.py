@@ -771,3 +771,62 @@ class TestType():
             [{'__type__': {'Edge', 'XY'}}], [{'__type__': {'Edge', 'YZ'}}], [{'__type__': {'Edge', 'ZX'}}],
             [{'__type__': {'Edge', 'XY'}}, {'__type__': {'Edge', 'YZ'}}], [{'__type__': {'Edge', 'YZ'}}, {'__type__': {'Edge', 'ZX'}}], [{'__type__': {'Edge', 'ZX'}}, {'__type__': {'Edge', 'XY'}}]
         ]
+
+    def test_host_no_node_type(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        host.add_edge("z", "x")
+
+        qry = """
+        MATCH (A:Node)-->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == []
+        assert res["B"] == []
+
+    def test_node_type(self):
+        host = nx.DiGraph()
+        host.add_node("x", __type__ = set(["Node", "X"]), foo="1")
+        host.add_node("y", __type__ = set(["Node", "Y"]), foo="2")
+        host.add_node("z", __type__ = set(["Node", "Z"]), foo="3")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        host.add_edge("z", "x")
+
+        qry = """
+        MATCH (A)-->(B:Node)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["y", "z", "x"]
+
+        qry = """
+        MATCH (A:Node)-->(B:X)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["z"]
+        assert res["B"] == ["x"]
+
+        qry = """
+        MATCH (A:Node)-->(B)
+        where A.foo == "2"
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["y"]
+        assert res["B"] == ["z"]
