@@ -726,3 +726,48 @@ class TestType():
         assert len(res) == 2
         assert res["A"] == ["y"]
         assert res["B"] == ["z"]
+
+    def test_edge_type_hop(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y", __type__={"Edge", "XY"})
+        host.add_edge("y", "z", __type__={"Edge", "YZ"})
+        host.add_edge("z", "x", __type__={"Edge", "ZX"})
+
+        qry = """
+        MATCH (A)-[:XY*2]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == []
+        assert res["B"] == []
+
+        qry = """
+        MATCH (A)-[:XY*0..2]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y", "z", "x"]
+        assert res["B"] == ["x", "y", "z", "y"]
+
+        qry = """
+        MATCH (A)-[r:Edge*0..2]->(B)
+        RETURN A, B, r
+        """
+
+        res = GrandCypher(host).run(qry)
+        print(res)
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["r"] == [
+            [None], [None], [None],
+            [{'__type__': {'Edge', 'XY'}}], [{'__type__': {'Edge', 'YZ'}}], [{'__type__': {'Edge', 'ZX'}}],
+            [{'__type__': {'Edge', 'XY'}}, {'__type__': {'Edge', 'YZ'}}], [{'__type__': {'Edge', 'YZ'}}, {'__type__': {'Edge', 'ZX'}}], [{'__type__': {'Edge', 'ZX'}}, {'__type__': {'Edge', 'XY'}}]
+        ]
