@@ -385,20 +385,42 @@ class _GrandCypherTransformer(Transformer):
                         matches = [{**a, **b} for a in matches for b in _matches]
                 zero_hop_edges = [k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]]
                 for match in matches:
+                    # matches can contains zero hop edges from A to B
+                    # there are 2 cases to take care
+                    # (1) there are both A and B in the match. This case is the result of query A -[*0]-> B --> C.
+                    #   If A != B break else continue to (2)
+                    # (2) there is only A in the match. This case is the result of query A -[*0]-> B. 
+                    #   If A is qualified to be B (node attr match), set B = A else break
                     for a, b in zero_hop_edges:
+                        if b in match and match[b] != match[a]:
+                            break
+                        if not _is_node_attr_match(b, match[a], self._motif, self._target_graph):
+                            break
                         match[b] = match[a]
-                    self_matches.append(match)
-                    self_matche_paths.append(edge_hop_map)
+                    else:
+                        self_matches.append(match)
+                        self_matche_paths.append(edge_hop_map)
             self._matches = self_matches
             self._matche_paths = self_matche_paths
         return list(zip(self._matches, self._matche_paths))
     
     def _edge_hop_motifs(self, motif: nx.DiGraph) -> List[Tuple[nx.Graph, dict]]:
+        """generate a list of edge-hop-expanded motif with edge-hop-map.
+        
+        Arguments:
+            motif (nx.Graph): The motif graph
+
+        Returns:
+            List[Tuple[nx.Graph, dict]]: list of motif and edge-hop-map. \
+                edge-hop-map is a mapping from an edge to a real edge path
+                where a real edge path can have more than 2 element (hop >= 2)
+                or it can have 2 same element (hop = 0).
+        """
         new_motif = nx.DiGraph()
         for n in motif.nodes:
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
                 new_motif.add_node(n, **motif.nodes[n])
-        motifs = [(new_motif, {})]
+        motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
         for u, v in motif.edges:
             new_motifs = []
             min_hop = motif.edges[u, v]["__min_hop__"]
@@ -407,12 +429,12 @@ class _GrandCypherTransformer(Transformer):
             hops = []
             if min_hop == 0:
                 new_motif = nx.DiGraph()
-                new_motif.add_node(u)
+                new_motif.add_node(u, **motif.nodes[u])
                 new_motifs.append((new_motif, {(u, v): (u, u)}))
             elif min_hop >= 1:
                 for _ in range(1, min_hop):
                     hops.append(shortuuid())
-            for i in range(max(min_hop, 1), max_hop):
+            for _ in range(max(min_hop, 1), max_hop):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
                 new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __labels__ = edge_type)
@@ -422,9 +444,9 @@ class _GrandCypherTransformer(Transformer):
                 hops.append(shortuuid())
             motifs = self._product_motifs(motifs, new_motifs)
         return motifs
-            
 
-    def _product_motifs(self, motifs_1, motifs_2):
+    def _product_motifs(
+            self, motifs_1: List[Tuple[nx.DiGraph, dict]], motifs_2: List[Tuple[nx.DiGraph, dict]]):
         new_motifs = []
         for motif_1, mapping_1 in motifs_1:
             for motif_2, mapping_2 in motifs_2:
@@ -475,7 +497,7 @@ class _GrandCypherTransformer(Transformer):
             elif token.type == "CNAME":
                 cname = token
             elif token.type == "TYPE":
-                node_type = token
+                node_type = token.value
         cname = cname or Token("CNAME", shortuuid())
         json_data = json_data or {}
         node_type = set([node_type]) if node_type else set()
