@@ -56,6 +56,8 @@ condition           : entity_id op entity_id_or_value
 ?entity_id_or_value : entity_id
                     | value
                     | "NULL"i -> null
+                    | "TRUE"i -> true
+                    | "FALSE"i -> false
 
 op                  : "==" -> op_eq
                     | "=" -> op_eq
@@ -114,6 +116,8 @@ key                 : CNAME
 ?value              : ESTRING
                     | NUMBER
                     | "NULL"i -> null
+                    | "TRUE"i -> true
+                    | "FALSE"i -> false
 
 
 %import common.CNAME            -> CNAME
@@ -561,6 +565,8 @@ class _GrandCypherTransformer(Transformer):
             return (True, entity_id, operator, value)
 
     null = lambda self, _: None
+    true = lambda self, _: True
+    false = lambda self, _: False
     ESTRING = v_args(inline=True)(eval)
     NUMBER = v_args(inline=True)(eval)
 

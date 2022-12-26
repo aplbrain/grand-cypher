@@ -762,7 +762,7 @@ class TestType():
         """
 
         res = GrandCypher(host).run(qry)
-        print(res)
+
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
@@ -875,18 +875,18 @@ class TestSpecialCases:
 
     def test_two_edge_hop_with_edge_node_type(self):
         host = nx.DiGraph()
-        host.add_node("C_1_1", __labels__ = set(["X"]), head="True")
+        host.add_node("C_1_1", __labels__ = set(["X"]), head=True)
         host.add_node("C_1_2", __labels__ = set(["X"]))
         host.add_node("C_1_3", __labels__ = set(["X"]))
-        host.add_node("C_2_1", name="C_2_1", __labels__ = set(["X"]), head="True")
+        host.add_node("C_2_1", name="C_2_1", __labels__ = set(["X"]), head=True)
         host.add_node("C_2_2", __labels__ = set(["X"]))
         host.add_edge("C_1_1", "C_1_2", __labels__ = set(["b"]))
         host.add_edge("C_1_2", "C_1_3", __labels__ = set(["b"]))
         host.add_edge("C_2_1", "C_2_2", __labels__ = set(["b"]))
 
-        host.add_node("a_1_1", __labels__ = set(["Y"]), head="True")
+        host.add_node("a_1_1", __labels__ = set(["Y"]), head=True)
         host.add_node("a_1_2", __labels__ = set(["Y"]))
-        host.add_node("a_2_1", __labels__ = set(["Y"]), head="True")
+        host.add_node("a_2_1", __labels__ = set(["Y"]), head=True)
         host.add_edge("a_1_1", "a1_2", __labels__ = set(["b"]))
 
         host.add_edge("C_1_1", "a_1_1", __labels__ = set(["i"]))
@@ -895,7 +895,8 @@ class TestSpecialCases:
         host.add_edge("C_2_2", "a_2_1", __labels__ = set(["i"]))
 
         qry = """
-        MATCH (A:X{head:"True"}) -[:b*0..5]-> (B:X) -[:i*0..1]-> (c)
+        MATCH (A:X) -[:b*0..5]-> (B:X) -[:i*0..1]-> (c)
+        where A.head is True
         return A, B, c
         """
 
