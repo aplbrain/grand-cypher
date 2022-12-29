@@ -9,6 +9,7 @@ to search in a much larger graph database.
 from typing import Dict, List, Callable, Tuple
 import random
 import string
+from functools import lru_cache
 import networkx as nx
 
 import grandiso
@@ -55,6 +56,8 @@ condition           : entity_id op entity_id_or_value
 ?entity_id_or_value : entity_id
                     | value
                     | "NULL"i -> null
+                    | "TRUE"i -> true
+                    | "FALSE"i -> false
 
 op                  : "==" -> op_eq
                     | "=" -> op_eq
@@ -79,20 +82,29 @@ skip_clause         : "skip"i NUMBER
                     | CNAME "." CNAME
 
 node_match          : "(" (CNAME)? (json_dict)? ")"
+                    | "(" (CNAME)? ":" TYPE (json_dict)? ")"
 
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE? 
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "]-" RIGHT_ANGLE? 
+                    | LEFT_ANGLE? "-[" ":" TYPE "]-" RIGHT_ANGLE? 
                     | LEFT_ANGLE? "-[" "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+
 
 
 LEFT_ANGLE          : "<"
 RIGHT_ANGLE         : ">"
 MIN_HOP             : INT
 MAX_HOP             : INT
+TYPE                : CNAME
 
 json_dict           : "{" json_rule ("," json_rule)* "}"
 ?json_rule          : CNAME ":" value
@@ -104,6 +116,8 @@ key                 : CNAME
 ?value              : ESTRING
                     | NUMBER
                     | "NULL"i -> null
+                    | "TRUE"i -> true
+                    | "FALSE"i -> false
 
 
 %import common.CNAME            -> CNAME
@@ -126,6 +140,72 @@ _ALPHABET = string.ascii_lowercase + string.digits
 
 def shortuuid(k=4) -> str:
     return "".join(random.choices(_ALPHABET, k=k))
+
+
+@lru_cache()
+def _is_node_attr_match(
+    motif_node_id: str, host_node_id: str, motif: nx.Graph, host: nx.Graph
+) -> bool:
+    """
+    Check if a node in the host graph matches the attributes in the motif.
+
+    Arguments:
+        motif_node_id (str): The motif node ID
+        host_node_id (str): The host graph ID
+        motif (nx.Graph): The motif graph
+        host (nx.Graph): The host graph
+
+    Returns:
+        bool: True if the host node matches the attributes in the motif
+
+    """
+    motif_node = motif.nodes[motif_node_id]
+    host_node = host.nodes[host_node_id]
+
+    for attr, val in motif_node.items():
+        if attr == '__labels__':
+            if val and val - host_node.get("__labels__", set()):
+                return False
+            continue
+        if host_node.get(attr) != val:
+            return False
+
+    return True
+
+
+@lru_cache()
+def _is_edge_attr_match(
+    motif_edge_id: Tuple[str, str],
+    host_edge_id: Tuple[str, str],
+    motif: nx.Graph,
+    host: nx.Graph,
+) -> bool:
+    """
+    Check if an edge in the host graph matches the attributes in the motif.
+    This also check the __labels__ of edges.
+
+    Arguments:
+        motif_edge_id (str): The motif edge ID
+        host_edge_id (str): The host edge ID
+        motif (nx.Graph): The motif graph
+        host (nx.Graph): The host graph
+
+    Returns:
+        bool: True if the host edge matches the attributes in the motif
+
+    """
+    motif_edge = motif.edges[motif_edge_id]
+    host_edge = host.edges[host_edge_id]
+
+    for attr, val in motif_edge.items():
+        if attr == '__labels__':
+            if val and val - host_edge.get("__labels__", set()):
+                return False
+            continue
+        if host_edge.get(attr) != val:
+            return False
+
+    return True
 
 
 def _get_entity_from_host(host: nx.DiGraph, entity_name, entity_attribute=None):
@@ -201,7 +281,6 @@ _BOOL_ARI = {
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
         self._target_graph = target_graph
-        self._conditions: List[CONDITION] = []
         self._where_condition: CONDITION = None
         self._motif = nx.DiGraph()
         self._matches = None
@@ -237,10 +316,10 @@ class _GrandCypherTransformer(Transformer):
             if data_path in self._return_edges:
                 mapping_u, mapping_v = self._return_edges[data_path]
                 # We are looking for an edge mapping in the target graph:
-
+                is_hop = self._motif.edges[(mapping_u, mapping_v)]["__is_hop__"]
                 ret = (_get_edge(self._target_graph, mapping, match_path,mapping_u, mapping_v)
                        for mapping, match_path in self._get_true_matches())
-                ret = (r[0] if len (r) == 1 else r for r in ret)
+                ret = (r[0] if is_hop else r for r in ret)
                 # we keep the original list if len > 2 (edge hop 2+)
                 
                 if entity_attribute:
@@ -280,13 +359,9 @@ class _GrandCypherTransformer(Transformer):
         # TODO: promote these to inside the monomorphism search
         actual_matches = []
         for match, match_path in self._get_structural_matches():
-            for condition in self._conditions:
-                if not condition(match, self._target_graph, self._return_edges):
-                    break
-            else:
-                if (not self._where_condition or
-                    self._where_condition(match, self._target_graph, self._return_edges)):
-                    actual_matches.append((match, match_path))
+            if (not self._where_condition or
+                self._where_condition(match, self._target_graph, self._return_edges)):
+                actual_matches.append((match, match_path))
         return actual_matches
 
     def _get_structural_matches(self):
@@ -305,6 +380,8 @@ class _GrandCypherTransformer(Transformer):
                         limit=(self._limit + self._skip + 1)
                         if (self._skip and self._limit)
                         else None,
+                        is_node_attr_match=_is_node_attr_match,
+                        is_edge_attr_match=_is_edge_attr_match
                     )
                     if not matches:
                         matches = _matches
@@ -312,51 +389,76 @@ class _GrandCypherTransformer(Transformer):
                         matches = [{**a, **b} for a in matches for b in _matches]
                 zero_hop_edges = [k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]]
                 for match in matches:
+                    # matches can contains zero hop edges from A to B
+                    # there are 2 cases to take care
+                    # (1) there are both A and B in the match. This case is the result of query A -[*0]-> B --> C.
+                    #   If A != B break else continue to (2)
+                    # (2) there is only A in the match. This case is the result of query A -[*0]-> B. 
+                    #   If A is qualified to be B (node attr match), set B = A else break
                     for a, b in zero_hop_edges:
+                        if b in match and match[b] != match[a]:
+                            break
+                        if not _is_node_attr_match(b, match[a], self._motif, self._target_graph):
+                            break
                         match[b] = match[a]
-                    self_matches.append(match)
-                    self_matche_paths.append(edge_hop_map)
+                    else:
+                        self_matches.append(match)
+                        self_matche_paths.append(edge_hop_map)
             self._matches = self_matches
             self._matche_paths = self_matche_paths
         return list(zip(self._matches, self._matche_paths))
     
     def _edge_hop_motifs(self, motif: nx.DiGraph) -> List[Tuple[nx.Graph, dict]]:
+        """generate a list of edge-hop-expanded motif with edge-hop-map.
+        
+        Arguments:
+            motif (nx.Graph): The motif graph
+
+        Returns:
+            List[Tuple[nx.Graph, dict]]: list of motif and edge-hop-map. \
+                edge-hop-map is a mapping from an edge to a real edge path
+                where a real edge path can have more than 2 element (hop >= 2)
+                or it can have 2 same element (hop = 0).
+        """
         new_motif = nx.DiGraph()
         for n in motif.nodes:
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
-                new_motif.add_node(n)
-        motifs = [(new_motif, {})]
+                new_motif.add_node(n, **motif.nodes[n])
+        motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
         for u, v in motif.edges:
             new_motifs = []
             min_hop = motif.edges[u, v]["__min_hop__"]
             max_hop = motif.edges[u, v]["__max_hop__"]
+            edge_type = motif.edges[u, v]["__labels__"]
             hops = []
             if min_hop == 0:
                 new_motif = nx.DiGraph()
-                new_motif.add_node(u)
+                new_motif.add_node(u, **motif.nodes[u])
                 new_motifs.append((new_motif, {(u, v): (u, u)}))
             elif min_hop >= 1:
                 for _ in range(1, min_hop):
                     hops.append(shortuuid())
-            for i in range(max(min_hop, 1), max_hop):
+            for _ in range(max(min_hop, 1), max_hop):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
-                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])))
+                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __labels__ = edge_type)
+                new_motif.add_node(u, **motif.nodes[u])
+                new_motif.add_node(v, **motif.nodes[v])
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
                 hops.append(shortuuid())
             motifs = self._product_motifs(motifs, new_motifs)
         return motifs
-            
 
-    def _product_motifs(self, motifs_1, motifs_2):
+    def _product_motifs(
+            self, motifs_1: List[Tuple[nx.DiGraph, dict]], motifs_2: List[Tuple[nx.DiGraph, dict]]):
         new_motifs = []
         for motif_1, mapping_1 in motifs_1:
             for motif_2, mapping_2 in motifs_2:
                 motif = nx.DiGraph()
-                motif.add_nodes_from(motif_1.nodes)
-                motif.add_nodes_from(motif_2.nodes)
-                motif.add_edges_from(motif_1.edges)
-                motif.add_edges_from(motif_2.edges)
+                motif.add_nodes_from(motif_1.nodes.data())
+                motif.add_nodes_from(motif_2.nodes.data())
+                motif.add_edges_from(motif_1.edges.data())
+                motif.add_edges_from(motif_2.edges.data())
                 new_motifs.append((motif, {**mapping_1, **mapping_2}))
         return new_motifs
         
@@ -367,7 +469,7 @@ class _GrandCypherTransformer(Transformer):
         return entity_id.value
 
     def edge_match(self, edge_name):
-        direction = cname = min_hop = max_hop = None
+        direction = cname = min_hop = max_hop = edge_type = None
 
         for token in edge_name:
             if token.type == "MIN_HOP":
@@ -380,39 +482,40 @@ class _GrandCypherTransformer(Transformer):
                 direction = "b"
             elif token.type == "RIGHT_ANGLE":
                 direction = "r"
+            elif token.type == "TYPE":
+                edge_type = token.value
             else:
                 cname = token
 
         direction = direction if direction is not None else "b"
         if (min_hop is not None or max_hop is not None) and (direction == "b"):
             raise TypeError("not support edge hopping for bidirectional edge")
-        min_hop = min_hop if min_hop is not None else 1
-        max_hop = max_hop if max_hop is not None else min_hop + 1
-        if max_hop > self._max_hop:
-            raise ValueError(f"max hop is caped at 100, found {max_hop}!")
 
-        return (cname, direction, min_hop, max_hop)
+        return (cname, edge_type, direction, min_hop, max_hop)
 
     def node_match(self, node_name):
-        if not node_name:
-            node_name = [Token("CNAME", shortuuid()), {}]
-        elif len(node_name) == 1 and not isinstance(node_name[0], Token):
-            node_name = [Token("CNAME", shortuuid()), node_name[0]]
-        elif len(node_name) == 1:
-            node_name = [node_name[0], {}]
-        node_name, constraints = node_name
-        for key, val in constraints.items():
-            cond = cond_(True, f"{node_name}.{key}", _OPERATORS["=="], val)
-            self._conditions.append(cond)
-        return node_name
+        cname = node_type = json_data = None
+        for token in node_name:
+            if not isinstance(token, Token):
+                json_data = token
+            elif token.type == "CNAME":
+                cname = token
+            elif token.type == "TYPE":
+                node_type = token.value
+        cname = cname or Token("CNAME", shortuuid())
+        json_data = json_data or {}
+        node_type = set([node_type]) if node_type else set()
+
+        return (cname, node_type, json_data)
 
     def match_clause(self, match_clause: Tuple):
         if len(match_clause) == 1:
             # This is just a node match:
-            self._motif.add_node(match_clause[0].value)
+            u, ut, js = match_clause[0]
+            self._motif.add_node(u.value, __labels__ = ut, **js)
             return
         for start in range(0, len(match_clause) - 2, 2):
-            (u, (g, d, minh, maxh), v) = match_clause[start : start + 3]
+            ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[start : start + 3]
             if d == "r":
                 edges = ((u.value, v.value),)
             elif d == "l":
@@ -421,10 +524,22 @@ class _GrandCypherTransformer(Transformer):
                 edges = ((u.value, v.value), (v.value, u.value))
             else:
                 raise ValueError(f"Not support direction d={d!r}")
-
+            
             if g:
                 self._return_edges[g.value] = edges[0]
-            self._motif.add_edges_from(edges, __min_hop__ = minh, __max_hop__ = maxh)
+            
+            ish = minh is None and maxh is None
+            minh = minh if minh is not None else 1
+            maxh = maxh if maxh is not None else minh + 1
+            if maxh > self._max_hop:
+                raise ValueError(f"max hop is caped at 100, found {maxh}!")
+            if t:
+                t = set([t])
+            self._motif.add_edges_from(
+                edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __labels__ = t)
+            
+            self._motif.add_node(u, __labels__=ut, **ujs)
+            self._motif.add_node(v, __labels__=vt, **vjs)
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]
@@ -450,6 +565,8 @@ class _GrandCypherTransformer(Transformer):
             return (True, entity_id, operator, value)
 
     null = lambda self, _: None
+    true = lambda self, _: True
+    false = lambda self, _: False
     ESTRING = v_args(inline=True)(eval)
     NUMBER = v_args(inline=True)(eval)
 

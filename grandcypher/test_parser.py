@@ -616,7 +616,7 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["x", "y", "z"]
-        assert res["r"] == [None, None, None]
+        assert res["r"] == [[None], [None], [None]]
 
         qry = """
         MATCH (A)-[r*1]->(B)
@@ -627,7 +627,7 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["y", "z", "x"]
-        assert res["r"] == [{"bar": "1"}, {"bar": "2"}, {"bar": "3"}]
+        assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
 
         qry = """
         MATCH (A)-[r*2]->(B)
@@ -661,6 +661,254 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert res["r"] == [
-            None, None, None, 
-            {"bar": "1"}, {"bar": "2"}, {"bar": "3"}, 
+            [None], [None], [None], 
+            [{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}], 
             [{"bar": "1"}, {"bar": "2"}], [{"bar": "2"}, {"bar": "3"}], [{"bar": "3"}, {"bar": "1"}]]
+
+
+class TestType():
+
+    def test_host_no_edge_type(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y", bar="1")
+        host.add_edge("y", "z", bar="2")
+        host.add_edge("z", "x", bar="3")
+
+        qry = """
+        MATCH (A)-[:A]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == []
+        assert res["B"] == []
+
+    def test_edge_type(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y", __labels__={"Edge", "XY"}, bar="1")
+        host.add_edge("y", "z", __labels__={"Edge", "YZ"}, bar="2")
+        host.add_edge("z", "x", __labels__={"Edge", "ZX"}, bar="3")
+
+        qry = """
+        MATCH (A)-[:XY]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x"]
+        assert res["B"] == ["y"]
+
+        qry = """
+        MATCH (A)-[:Edge]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["y", "z", "x"]
+
+        qry = """
+        MATCH (A)-[r:Edge]->(B)
+        where r.bar == "2"
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["y"]
+        assert res["B"] == ["z"]
+
+    def test_edge_type_hop(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y", __labels__={"Edge", "XY"})
+        host.add_edge("y", "z", __labels__={"Edge", "YZ"})
+        host.add_edge("z", "x", __labels__={"Edge", "ZX"})
+
+        qry = """
+        MATCH (A)-[:XY*2]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == []
+        assert res["B"] == []
+
+        qry = """
+        MATCH (A)-[:XY*0..2]->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y", "z", "x"]
+        assert res["B"] == ["x", "y", "z", "y"]
+
+        qry = """
+        MATCH (A)-[r:Edge*0..2]->(B)
+        RETURN A, B, r
+        """
+
+        res = GrandCypher(host).run(qry)
+
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["r"] == [
+            [None], [None], [None],
+            [{'__labels__': {'Edge', 'XY'}}], [{'__labels__': {'Edge', 'YZ'}}], [{'__labels__': {'Edge', 'ZX'}}],
+            [{'__labels__': {'Edge', 'XY'}}, {'__labels__': {'Edge', 'YZ'}}], [{'__labels__': {'Edge', 'YZ'}}, {'__labels__': {'Edge', 'ZX'}}], [{'__labels__': {'Edge', 'ZX'}}, {'__labels__': {'Edge', 'XY'}}]
+        ]
+
+    def test_host_no_node_type(self):
+        host = nx.DiGraph()
+        host.add_node("x")
+        host.add_node("y")
+        host.add_node("z")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        host.add_edge("z", "x")
+
+        qry = """
+        MATCH (A:Node)-->(B)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == []
+        assert res["B"] == []
+
+    def test_node_type(self):
+        host = nx.DiGraph()
+        host.add_node("x", __labels__ = set(["Node", "X"]), foo="1")
+        host.add_node("y", __labels__ = set(["Node", "Y"]), foo="2")
+        host.add_node("z", __labels__ = set(["Node", "Z"]), foo="3")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        host.add_edge("z", "x")
+
+        qry = """
+        MATCH (A)-->(B:Node)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["y", "z", "x"]
+
+        qry = """
+        MATCH (A:Node)-->(B:X)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["z"]
+        assert res["B"] == ["x"]
+
+        qry = """
+        MATCH (A:Node)-->(B)
+        where A.foo == "2"
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["y"]
+        assert res["B"] == ["z"]
+
+    def test_node_type_edge_hop(self):
+        host = nx.DiGraph()
+        host.add_node("x", __labels__ = set(["Node", "X"]), foo="1")
+        host.add_node("y", __labels__ = set(["Node", "Y"]), foo="2")
+        host.add_node("z", __labels__ = set(["Node", "Z"]), foo="3")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+
+        qry = """
+        MATCH (A:Node)-[*0..1]->(B:X)
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x"]
+        assert res["B"] == ["x"]
+
+        qry = """
+        MATCH (A:Node)-[*0..2]->(B{foo:"2"})
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["y", "x"]
+        assert res["B"] == ["y", "y"]
+
+        qry = """
+        MATCH (A:X)-[*0..2]->(B)
+        where B.foo == "1" or B.foo == "3"
+        RETURN A, B
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 2
+        assert res["A"] == ["x", "x"]
+        assert res["B"] == ["x", "z"]
+
+
+class TestSpecialCases:
+
+    def test_two_edge_hop_with_edge_node_type(self):
+        host = nx.DiGraph()
+        host.add_node("C_1_1", __labels__ = set(["X"]), head=True)
+        host.add_node("C_1_2", __labels__ = set(["X"]))
+        host.add_node("C_1_3", __labels__ = set(["X"]))
+        host.add_node("C_2_1", name="C_2_1", __labels__ = set(["X"]), head=True)
+        host.add_node("C_2_2", __labels__ = set(["X"]))
+        host.add_edge("C_1_1", "C_1_2", __labels__ = set(["b"]))
+        host.add_edge("C_1_2", "C_1_3", __labels__ = set(["b"]))
+        host.add_edge("C_2_1", "C_2_2", __labels__ = set(["b"]))
+
+        host.add_node("a_1_1", __labels__ = set(["Y"]), head=True)
+        host.add_node("a_1_2", __labels__ = set(["Y"]))
+        host.add_node("a_2_1", __labels__ = set(["Y"]), head=True)
+        host.add_edge("a_1_1", "a1_2", __labels__ = set(["b"]))
+
+        host.add_edge("C_1_1", "a_1_1", __labels__ = set(["i"]))
+        host.add_edge("C_1_3", "a_1_2", __labels__ = set(["i"]))
+        host.add_edge("C_1_2", "a_2_1", __labels__ = set(["i"]))
+        host.add_edge("C_2_2", "a_2_1", __labels__ = set(["i"]))
+
+        qry = """
+        MATCH (A:X) -[:b*0..5]-> (B:X) -[:i*0..1]-> (c)
+        where A.head is True
+        return A, B, c
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        
+        C_1_indices = [i for i, v in enumerate(res["A"]) if v == "C_1_1"]
+        C_2_indices = [i for i, v in enumerate(res["A"]) if v == "C_2_1"]
+        assert len(C_1_indices) + len(C_2_indices) == len(res["A"])
+        
+        assert set(res["B"][i] for i in C_1_indices) == set(["C_1_1", "C_1_2", "C_1_3"])
+        assert set(res["c"][i] for i in C_1_indices) == set(["C_1_1", "C_1_2", "C_1_3", "a_1_1", "a_1_2", "a_2_1"])
+        
+        assert set(res["B"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2"])
+        assert set(res["c"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2", "a_2_1"])
