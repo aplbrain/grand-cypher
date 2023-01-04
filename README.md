@@ -1,6 +1,5 @@
 <h1 align=center>GrandCypher</h1>
-<div align=center><img src="https://img.shields.io/pypi/v/grand-cypher?style=for-the-badge" /> <img alt="GitHub Workflow Status (branch)" src="https://img.shields.io/github/workflow/status/aplbrain/grand-cypher/Test%20and%20lint/master?style=for-the-badge"></div>
-
+<div align=center><img src="https://img.shields.io/pypi/v/grand-cypher?style=for-the-badge" /> <img alt="GitHub Workflow Status (branch)" src="https://img.shields.io/github/actions/workflow/status/aplbrain/grand-cypher/python-package.yml?branch=master&style=for-the-badge"></div>
 ---
 
 ```shell
@@ -75,10 +74,11 @@ RETURN
 | Anonymous `()` nodes                       | ✅ Thanks @khoale88! |     |
 | Undirected `()-[]-()` edges                | ✅ Thanks @khoale88! |     |
 | Boolean Arithmetic (`AND`/`OR`)            | ✅ Thanks @khoale88! |     |
-| `OPTIONAL MATCH`                           | 🛣                    |     |
-| `(:Type)` node-types                       | 🛣                    |     |
-| `[:Type]` edge-types                       | 🛣                    |     |
-| Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                    |     |
+| `OPTIONAL MATCH`                           | 🛣                   |     |
+| `(:Type)` node-labels                      | ✅ Thanks @khoale88! |     |
+| `[:Type]` edge-labels                      | ✅ Thanks @khoale88! |     |
+| Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                   |     |
+
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |
