@@ -278,6 +278,18 @@ _BOOL_ARI = {
 }
 
 
+def _data_path_to_entity_name_attribute(data_path):
+    if not isinstance(data_path, str):
+        data_path = data_path.value
+    if "." in data_path:
+        entity_name, entity_attribute = data_path.split(".")
+    else:
+        entity_name = data_path
+        entity_attribute = None
+
+    return entity_name, entity_attribute
+
+
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph):
         self._target_graph = target_graph
@@ -291,34 +303,40 @@ class _GrandCypherTransformer(Transformer):
         self._skip = 0
         self._max_hop = 100
 
-    def _lookup(self, data_path):
-        if not isinstance(data_path, str):
-            data_path = data_path.value
-        if "." in data_path:
-            entity_name, entity_attribute = data_path.split(".")
-        else:
-            entity_name = data_path
-            entity_attribute = None
+    def _lookup(self, data_paths: List[str], offset_limit) -> Dict[str, List]:
+        if not data_paths:
+            return {}
 
-        if entity_name in self._motif.nodes():
-            # We are looking for a node mapping in the target graph:
+        motif_nodes = self._motif.nodes()
 
-            ret = (mapping[entity_name] for mapping, _ in self._get_true_matches())
-            # by default, just return the node from the host graph
+        for data_path in data_paths:
+            entity_name, _ = _data_path_to_entity_name_attribute(data_path)
+            if entity_name not in motif_nodes and entity_name not in self._return_edges:
+                raise NotImplementedError(f"Unknown entity name: {data_path}")
+        
+        result = {}
+        true_matches = self._get_true_matches()
 
-            if entity_attribute:
-                # Get the correct entity from the target host graph,
-                # and then return the attribute:
-                ret = (self._target_graph.nodes[node].get(entity_attribute, None) for node in ret)
+        for data_path in data_paths:
+            entity_name, entity_attribute = _data_path_to_entity_name_attribute(data_path)
 
-            return list(ret)
-        else:
-            if data_path in self._return_edges:
+            if entity_name in motif_nodes:
+                # We are looking for a node mapping in the target graph:
+
+                ret = (mapping[entity_name] for mapping, _ in true_matches)
+                # by default, just return the node from the host graph
+
+                if entity_attribute:
+                    # Get the correct entity from the target host graph,
+                    # and then return the attribute:
+                    ret = (self._target_graph.nodes[node].get(entity_attribute, None) for node in ret)
+
+            else:
                 mapping_u, mapping_v = self._return_edges[data_path]
                 # We are looking for an edge mapping in the target graph:
                 is_hop = self._motif.edges[(mapping_u, mapping_v)]["__is_hop__"]
                 ret = (_get_edge(self._target_graph, mapping, match_path,mapping_u, mapping_v)
-                       for mapping, match_path in self._get_true_matches())
+                    for mapping, match_path in true_matches)
                 ret = (r[0] if is_hop else r for r in ret)
                 # we keep the original list if len > 2 (edge hop 2+)
                 
@@ -327,9 +345,9 @@ class _GrandCypherTransformer(Transformer):
                     # and then return the attribute:
                     ret = (r.get(entity_attribute, None) for r in ret)
 
-                return list(ret)
+            result[data_path] = list(ret)[offset_limit]
 
-            raise NotImplementedError(f"Unknown entity name: {data_path}")
+        return result
 
     def return_clause(self, clause):
         for item in clause:
@@ -348,11 +366,11 @@ class _GrandCypherTransformer(Transformer):
 
     def returns(self, ignore_limit=False):
         if self._limit and ignore_limit is False:
-            return {
-                r: self._lookup(r)[self._skip : self._skip + self._limit]
-                for r in self._return_requests
-            }
-        return {r: self._lookup(r)[self._skip :] for r in self._return_requests}
+            offset_limit = slice(self._skip, self._skip + self._limit)
+        else:
+            offset_limit = slice(self._skip, None)
+
+        return self._lookup(self._return_requests, offset_limit=offset_limit)
 
     def _get_true_matches(self):
         # filter the matches based upon the conditions of the where clause:
