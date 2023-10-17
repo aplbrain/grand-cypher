@@ -1,5 +1,18 @@
 # CHANGELOG
 
+### **0.4.0** (October 17 2023)
+
+> Many performance updates, language features, and label support.
+
+#### Features
+
+-   Support for multi-hop queries in `MATCH` statements (#24, thanks @khoale88!)
+-   Support for single edge and node labels using the `__labels__` magic property (#25, thanks @khoale88!)
+
+#### Performance
+
+-   Performance improvements by @khoale88 that eliminate duplicated entity lookups (#28)
+
 ### **0.3.0** (December 14 2022)
 
 > This version adds support for boolean arithmetic with AND/OR, and other language features.
