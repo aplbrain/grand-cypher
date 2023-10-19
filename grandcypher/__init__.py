@@ -33,7 +33,7 @@ _OPERATORS = {
 
 
 _GrandCypherGrammar = Lark(
-    """
+    r"""
 start               : query
 
 query               : many_match_clause where_clause return_clause
@@ -86,9 +86,9 @@ node_match          : "(" (CNAME)? (json_dict)? ")"
 
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE? 
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "]-" RIGHT_ANGLE? 
-                    | LEFT_ANGLE? "-[" ":" TYPE "]-" RIGHT_ANGLE? 
+                    | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" TYPE "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
@@ -127,6 +127,8 @@ key                 : CNAME
 
 %import common.WS
 %ignore WS
+COMMENT: "//" /[^\n]/*
+%ignore COMMENT
 
 """,
     start="start",
@@ -163,7 +165,7 @@ def _is_node_attr_match(
     host_node = host.nodes[host_node_id]
 
     for attr, val in motif_node.items():
-        if attr == '__labels__':
+        if attr == "__labels__":
             if val and val - host_node.get("__labels__", set()):
                 return False
             continue
@@ -198,7 +200,7 @@ def _is_edge_attr_match(
     host_edge = host.edges[host_edge_id]
 
     for attr, val in motif_edge.items():
-        if attr == '__labels__':
+        if attr == "__labels__":
             if val and val - host_edge.get("__labels__", set()):
                 return False
             continue
@@ -222,9 +224,7 @@ def _get_entity_from_host(host: nx.DiGraph, entity_name, entity_attribute=None):
         # looking for an edge:
         edge_data = host.get_edge_data(*entity_name)
         if not edge_data:
-            return (
-                None  # print(f"Nothing found for {entity_name} {entity_attribute}")
-            )
+            return None  # print(f"Nothing found for {entity_name} {entity_attribute}")
         if entity_attribute:
             # looking for edge attribute:
             return edge_data.get(entity_attribute, None)
@@ -234,8 +234,10 @@ def _get_entity_from_host(host: nx.DiGraph, entity_name, entity_attribute=None):
 
 def _get_edge(host: nx.DiGraph, mapping, match_path, u, v):
     edge_path = match_path[(u, v)]
-    return [host.get_edge_data(mapping[u], mapping[v])
-            for u, v in zip(edge_path[:-1], edge_path[1:])]
+    return [
+        host.get_edge_data(mapping[u], mapping[v])
+        for u, v in zip(edge_path[:-1], edge_path[1:])
+    ]
 
 
 CONDITION = Callable[[dict, nx.DiGraph, list], bool]
@@ -244,12 +246,16 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 def and_(cond_a, cond_b) -> CONDITION:
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
         return cond_a(match, host, return_endges) and cond_b(match, host, return_endges)
+
     return inner
+
 
 def or_(cond_a, cond_b):
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
         return cond_a(match, host, return_endges) or cond_b(match, host, return_endges)
+
     return inner
+
 
 def cond_(should_be, entity_id, operator, value) -> CONDITION:
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
@@ -269,6 +275,7 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
         if val != should_be:
             return False
         return True
+
     return inner
 
 
@@ -313,12 +320,14 @@ class _GrandCypherTransformer(Transformer):
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
             if entity_name not in motif_nodes and entity_name not in self._return_edges:
                 raise NotImplementedError(f"Unknown entity name: {data_path}")
-        
+
         result = {}
         true_matches = self._get_true_matches()
 
         for data_path in data_paths:
-            entity_name, entity_attribute = _data_path_to_entity_name_attribute(data_path)
+            entity_name, entity_attribute = _data_path_to_entity_name_attribute(
+                data_path
+            )
 
             if entity_name in motif_nodes:
                 # We are looking for a node mapping in the target graph:
@@ -329,17 +338,24 @@ class _GrandCypherTransformer(Transformer):
                 if entity_attribute:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
-                    ret = (self._target_graph.nodes[node].get(entity_attribute, None) for node in ret)
+                    ret = (
+                        self._target_graph.nodes[node].get(entity_attribute, None)
+                        for node in ret
+                    )
 
             else:
                 mapping_u, mapping_v = self._return_edges[data_path]
                 # We are looking for an edge mapping in the target graph:
                 is_hop = self._motif.edges[(mapping_u, mapping_v)]["__is_hop__"]
-                ret = (_get_edge(self._target_graph, mapping, match_path,mapping_u, mapping_v)
-                    for mapping, match_path in true_matches)
+                ret = (
+                    _get_edge(
+                        self._target_graph, mapping, match_path, mapping_u, mapping_v
+                    )
+                    for mapping, match_path in true_matches
+                )
                 ret = (r[0] if is_hop else r for r in ret)
                 # we keep the original list if len > 2 (edge hop 2+)
-                
+
                 if entity_attribute:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
@@ -377,8 +393,9 @@ class _GrandCypherTransformer(Transformer):
         # TODO: promote these to inside the monomorphism search
         actual_matches = []
         for match, match_path in self._get_structural_matches():
-            if (not self._where_condition or
-                self._where_condition(match, self._target_graph, self._return_edges)):
+            if not self._where_condition or self._where_condition(
+                match, self._target_graph, self._return_edges
+            ):
                 actual_matches.append((match, match_path))
         return actual_matches
 
@@ -399,24 +416,28 @@ class _GrandCypherTransformer(Transformer):
                         if (self._skip and self._limit)
                         else None,
                         is_node_attr_match=_is_node_attr_match,
-                        is_edge_attr_match=_is_edge_attr_match
+                        is_edge_attr_match=_is_edge_attr_match,
                     )
                     if not matches:
                         matches = _matches
                     elif _matches:
                         matches = [{**a, **b} for a in matches for b in _matches]
-                zero_hop_edges = [k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]]
+                zero_hop_edges = [
+                    k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]
+                ]
                 for match in matches:
                     # matches can contains zero hop edges from A to B
                     # there are 2 cases to take care
                     # (1) there are both A and B in the match. This case is the result of query A -[*0]-> B --> C.
                     #   If A != B break else continue to (2)
-                    # (2) there is only A in the match. This case is the result of query A -[*0]-> B. 
+                    # (2) there is only A in the match. This case is the result of query A -[*0]-> B.
                     #   If A is qualified to be B (node attr match), set B = A else break
                     for a, b in zero_hop_edges:
                         if b in match and match[b] != match[a]:
                             break
-                        if not _is_node_attr_match(b, match[a], self._motif, self._target_graph):
+                        if not _is_node_attr_match(
+                            b, match[a], self._motif, self._target_graph
+                        ):
                             break
                         match[b] = match[a]
                     else:
@@ -425,10 +446,10 @@ class _GrandCypherTransformer(Transformer):
             self._matches = self_matches
             self._matche_paths = self_matche_paths
         return list(zip(self._matches, self._matche_paths))
-    
+
     def _edge_hop_motifs(self, motif: nx.DiGraph) -> List[Tuple[nx.Graph, dict]]:
         """generate a list of edge-hop-expanded motif with edge-hop-map.
-        
+
         Arguments:
             motif (nx.Graph): The motif graph
 
@@ -459,7 +480,9 @@ class _GrandCypherTransformer(Transformer):
             for _ in range(max(min_hop, 1), max_hop):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.DiGraph()
-                new_motif.add_edges_from(list(zip(new_edges[:-1], new_edges[1:])), __labels__ = edge_type)
+                new_motif.add_edges_from(
+                    list(zip(new_edges[:-1], new_edges[1:])), __labels__=edge_type
+                )
                 new_motif.add_node(u, **motif.nodes[u])
                 new_motif.add_node(v, **motif.nodes[v])
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
@@ -468,7 +491,10 @@ class _GrandCypherTransformer(Transformer):
         return motifs
 
     def _product_motifs(
-            self, motifs_1: List[Tuple[nx.DiGraph, dict]], motifs_2: List[Tuple[nx.DiGraph, dict]]):
+        self,
+        motifs_1: List[Tuple[nx.DiGraph, dict]],
+        motifs_2: List[Tuple[nx.DiGraph, dict]],
+    ):
         new_motifs = []
         for motif_1, mapping_1 in motifs_1:
             for motif_2, mapping_2 in motifs_2:
@@ -479,8 +505,7 @@ class _GrandCypherTransformer(Transformer):
                 motif.add_edges_from(motif_2.edges.data())
                 new_motifs.append((motif, {**mapping_1, **mapping_2}))
         return new_motifs
-        
-        
+
     def entity_id(self, entity_id):
         if len(entity_id) == 2:
             return ".".join(entity_id)
@@ -530,10 +555,12 @@ class _GrandCypherTransformer(Transformer):
         if len(match_clause) == 1:
             # This is just a node match:
             u, ut, js = match_clause[0]
-            self._motif.add_node(u.value, __labels__ = ut, **js)
+            self._motif.add_node(u.value, __labels__=ut, **js)
             return
         for start in range(0, len(match_clause) - 2, 2):
-            ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[start : start + 3]
+            ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[
+                start : start + 3
+            ]
             if d == "r":
                 edges = ((u.value, v.value),)
             elif d == "l":
@@ -542,10 +569,10 @@ class _GrandCypherTransformer(Transformer):
                 edges = ((u.value, v.value), (v.value, u.value))
             else:
                 raise ValueError(f"Not support direction d={d!r}")
-            
+
             if g:
                 self._return_edges[g.value] = edges[0]
-            
+
             ish = minh is None and maxh is None
             minh = minh if minh is not None else 1
             maxh = maxh if maxh is not None else minh + 1
@@ -554,14 +581,15 @@ class _GrandCypherTransformer(Transformer):
             if t:
                 t = set([t])
             self._motif.add_edges_from(
-                edges, __min_hop__ = minh, __max_hop__ = maxh, __is_hop__ = ish, __labels__ = t)
-            
+                edges, __min_hop__=minh, __max_hop__=maxh, __is_hop__=ish, __labels__=t
+            )
+
             self._motif.add_node(u, __labels__=ut, **ujs)
             self._motif.add_node(v, __labels__=vt, **vjs)
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]
-    
+
     def compound_condition(self, val):
         if len(val) == 1:
             val = cond_(*val[0])
@@ -573,7 +601,6 @@ class _GrandCypherTransformer(Transformer):
     def where_and(self, val):
         return _BOOL_ARI["and"]
 
-    
     def where_or(self, val):
         return _BOOL_ARI["or"]
 
@@ -632,7 +659,6 @@ class GrandCypher:
     """
 
     def __init__(self, host_graph: nx.Graph) -> None:
-
         """
         Create a new GrandCypher object to query graphs with Cypher.
 
