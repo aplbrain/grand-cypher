@@ -1,5 +1,11 @@
 # CHANGELOG
 
+### **0.5.0** (Unreleased)
+
+#### Features
+
+-   Support for C-style comments in queries with `//` (#31)
+
 ### **0.4.0** (October 17 2023)
 
 > Many performance updates, language features, and label support.
