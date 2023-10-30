@@ -29,6 +29,8 @@ _OPERATORS = {
     "in": lambda x, y: x in y,
     "contains": lambda x, y: y in x,
     "is": lambda x, y: x is y,
+    "starts_with": lambda x, y: x.startswith(y),
+    "ends_with": lambda x, y: x.endswith(y),
 }
 
 
@@ -52,6 +54,7 @@ compound_condition  : condition
                     | compound_condition boolean_arithmetic compound_condition
 
 condition           : entity_id op entity_id_or_value
+                    | "not"i condition -> condition_not
 
 ?entity_id_or_value : entity_id
                     | value
@@ -67,6 +70,11 @@ op                  : "==" -> op_eq
                     | ">="-> op_gte
                     | "<="-> op_lte
                     | "is"i -> op_is
+                    | "in"i -> op_in
+                    | "contains"i -> op_contains
+                    | "starts with"i -> op_starts_with
+                    | "ends with"i -> op_ends_with
+
 
 
 return_clause       : "return"i entity_id ("," entity_id)*
@@ -609,6 +617,9 @@ class _GrandCypherTransformer(Transformer):
             (entity_id, operator, value) = condition
             return (True, entity_id, operator, value)
 
+    def condition_not(self, processed_condition):
+        return (not processed_condition[0][0], *processed_condition[0][1:])
+
     null = lambda self, _: None
     true = lambda self, _: True
     false = lambda self, _: False
@@ -638,6 +649,18 @@ class _GrandCypherTransformer(Transformer):
 
     def op_is(self, _):
         return _OPERATORS["is"]
+
+    def op_in(self, _):
+        return _OPERATORS["in"]
+
+    def op_contains(self, _):
+        return _OPERATORS["contains"]
+
+    def op_starts_with(self, _):
+        return _OPERATORS["starts_with"]
+
+    def op_ends_with(self, _):
+        return _OPERATORS["ends_with"]
 
     def json_dict(self, tup):
         constraints = {}
