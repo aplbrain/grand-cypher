@@ -2,9 +2,17 @@
 
 ### **0.5.0** (Unreleased)
 
+> Lots of language support for new query operators.
+
 #### Features
 
 -   Support for C-style comments in queries with `//` (#31)
+-   Support for string operators, like `CONTAINS`, `STARTS WITH`, and `ENDS WITH` (#33)
+-   Support for negation of clauses with `NOT` (#33)
+
+#### Housekeeping
+
+-   Added more recent version of Python (3.9 through 3.11) to CI (#33)
 
 ### **0.4.0** (October 17 2023)
 
