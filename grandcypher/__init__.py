@@ -306,7 +306,7 @@ def _data_path_to_entity_name_attribute(data_path):
 
 
 class _GrandCypherTransformer(Transformer):
-    def __init__(self, target_graph: nx.Graph):
+    def __init__(self, target_graph: nx.Graph, limit=None):
         self._target_graph = target_graph
         self._where_condition: CONDITION = None
         self._motif = nx.DiGraph()
@@ -314,7 +314,7 @@ class _GrandCypherTransformer(Transformer):
         self._matche_paths = None
         self._return_requests = []
         self._return_edges = {}
-        self._limit = None
+        self._limit = limit
         self._skip = 0
         self._max_hop = 100
 
@@ -397,43 +397,22 @@ class _GrandCypherTransformer(Transformer):
         return self._lookup(self._return_requests, offset_limit=offset_limit)
 
     def _get_true_matches(self):
-        # filter the matches based upon the conditions of the where clause:
-        # TODO: promote these to inside the monomorphism search
-        actual_matches = []
-        for match, match_path in self._get_structural_matches():
-            if not self._where_condition or self._where_condition(
-                match, self._target_graph, self._return_edges
-            ):
-                actual_matches.append((match, match_path))
-        return actual_matches
-
-    def _get_structural_matches(self):
         if not self._matches:
             self_matches = []
             self_matche_paths = []
+            complete = False
+
             for my_motif, edge_hop_map in self._edge_hop_motifs(self._motif):
-                matches = []
-                for motif in (
-                    my_motif.subgraph(c)
-                    for c in nx.weakly_connected_components(my_motif)
-                ):
-                    _matches = grandiso.find_motifs(
-                        motif,
-                        self._target_graph,
-                        limit=(self._limit + self._skip + 1)
-                        if (self._skip and self._limit)
-                        else None,
-                        is_node_attr_match=_is_node_attr_match,
-                        is_edge_attr_match=_is_edge_attr_match,
-                    )
-                    if not matches:
-                        matches = _matches
-                    elif _matches:
-                        matches = [{**a, **b} for a in matches for b in _matches]
+                # Iteration is complete
+                if complete:
+                    break
+
                 zero_hop_edges = [
                     k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]
                 ]
-                for match in matches:
+
+                # Iterate over generated matches
+                for match in self._matches_iter(my_motif):
                     # matches can contains zero hop edges from A to B
                     # there are 2 cases to take care
                     # (1) there are both A and B in the match. This case is the result of query A -[*0]-> B --> C.
@@ -448,12 +427,69 @@ class _GrandCypherTransformer(Transformer):
                         ):
                             break
                         match[b] = match[a]
-                    else:
-                        self_matches.append(match)
-                        self_matche_paths.append(edge_hop_map)
+                    else: # For/else loop
+                        # Check if match matches where condition and add
+                        if not self._where_condition or self._where_condition(
+                            match, self._target_graph, self._return_edges
+                        ):
+                            self_matches.append(match)
+                            self_matche_paths.append(edge_hop_map)
+
+                            # Check if limit reached
+                            if self._is_limit(len(self_matches)):
+                                complete = True
+                                break
+
             self._matches = self_matches
             self._matche_paths = self_matche_paths
+
         return list(zip(self._matches, self._matche_paths))
+
+    def _matches_iter(self, motif):
+        # Get list of all match iterators
+        iterators = [
+            grandiso.find_motifs_iter(
+                motif.subgraph(c),
+                self._target_graph,
+                is_node_attr_match=_is_node_attr_match,
+                is_edge_attr_match=_is_edge_attr_match,
+            ) for c in nx.weakly_connected_components(motif)
+        ]
+
+        # Single match clause iterator
+        if iterators and len(iterators) == 1:
+            for x, match in enumerate(iterators[0]):
+                yield match
+
+        # Multi match clause, requires a cartesian join
+        else:
+            iterations, matches = 0, {}
+            for x, iterator in enumerate(iterators):
+                for match in iterator:
+                    if x not in matches:
+                        matches[x] = []
+
+                    matches[x].append(match)
+                    iterations += 1
+
+                    # Continue to next clause if limit reached
+                    if self._is_limit(len(matches[x])):
+                        continue
+
+            # Cartesian product of all match clauses
+            join = []
+            for match in matches.values():
+                if join:
+                    join = [{**a, **b} for a in join for b in match]
+                else:
+                    join = match
+
+            # Yield cartesian product
+            yield from join
+
+    def _is_limit(self, count):
+        # Check if limit reached
+        return self._limit and count >= (self._limit + self._skip)
 
     def _edge_hop_motifs(self, motif: nx.DiGraph) -> List[Tuple[nx.Graph, dict]]:
         """generate a list of edge-hop-expanded motif with edge-hop-map.
@@ -681,19 +717,20 @@ class GrandCypher:
 
     """
 
-    def __init__(self, host_graph: nx.Graph) -> None:
+    def __init__(self, host_graph: nx.Graph, limit: int = None) -> None:
         """
         Create a new GrandCypher object to query graphs with Cypher.
 
         Arguments:
             host_graph (nx.Graph): The host graph to use as a "graph database"
+            limit (int): The default limit to apply to queries when not otherwise provided
 
         Returns:
             None
 
         """
 
-        self._transformer = _GrandCypherTransformer(host_graph)
+        self._transformer = _GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
 
     def run(self, cypher: str) -> Dict[str, List]:
