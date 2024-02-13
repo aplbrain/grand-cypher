@@ -10,6 +10,10 @@
 -   Support for string operators, like `CONTAINS`, `STARTS WITH`, and `ENDS WITH` (#33)
 -   Support for negation of clauses with `NOT` (#33)
 
+#### Performance
+
+-   Huge performance boost for nonexhaustive queries via streaming matches (#34, thanks @davidmezzetti!)
+
 #### Housekeeping
 
 -   Added more recent version of Python (3.9 through 3.11) to CI (#33)

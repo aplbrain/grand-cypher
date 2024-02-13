@@ -1,10 +1,10 @@
 <h1 align=center>GrandCypher</h1>
 <div align=center><img src="https://img.shields.io/pypi/v/grand-cypher?style=for-the-badge" /> <img alt="GitHub Workflow Status (branch)" src="https://img.shields.io/github/actions/workflow/status/aplbrain/grand-cypher/python-package.yml?branch=master&style=for-the-badge"></div>
 
-
-
 ```shell
 pip install grand-cypher
+# Note: You will want a version of grandiso>=2.2.0 for best performance!
+pip install -U 'grandiso>=2.2.0'
 ```
 
 GrandCypher is a partial (and growing!) implementation of the Cypher graph query language written in Python, for Python data structures.
@@ -75,11 +75,10 @@ RETURN
 | Anonymous `()` nodes                       | ✅ Thanks @khoale88! |     |
 | Undirected `()-[]-()` edges                | ✅ Thanks @khoale88! |     |
 | Boolean Arithmetic (`AND`/`OR`)            | ✅ Thanks @khoale88! |     |
-| `OPTIONAL MATCH`                           | 🛣                   |     |
+| `OPTIONAL MATCH`                           | 🛣                    |     |
 | `(:Type)` node-labels                      | ✅ Thanks @khoale88! |     |
 | `[:Type]` edge-labels                      | ✅ Thanks @khoale88! |     |
-| Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                   |     |
-
+| Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                    |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |

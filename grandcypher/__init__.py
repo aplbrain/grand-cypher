@@ -6,6 +6,7 @@ data/attribute or by structure, using the same language you'd use
 to search in a much larger graph database.
 
 """
+
 from typing import Dict, List, Callable, Tuple
 import random
 import string
@@ -142,7 +143,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -427,7 +428,7 @@ class _GrandCypherTransformer(Transformer):
                         ):
                             break
                         match[b] = match[a]
-                    else: # For/else loop
+                    else:  # For/else loop
                         # Check if match matches where condition and add
                         if not self._where_condition or self._where_condition(
                             match, self._target_graph, self._return_edges
@@ -453,7 +454,8 @@ class _GrandCypherTransformer(Transformer):
                 self._target_graph,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
-            ) for c in nx.weakly_connected_components(motif)
+            )
+            for c in nx.weakly_connected_components(motif)
         ]
 
         # Single match clause iterator
