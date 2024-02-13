@@ -46,7 +46,9 @@ query               : many_match_clause where_clause return_clause
 many_match_clause   : (match_clause)+
 
 
-match_clause        : "match"i node_match (edge_match node_match)*
+match_clause        : "match"i path_clause? node_match (edge_match node_match)*
+
+path_clause         : CNAME EQUAL
 
 where_clause        : "where"i compound_condition
 
@@ -111,6 +113,7 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
 
 LEFT_ANGLE          : "<"
 RIGHT_ANGLE         : ">"
+EQUAL               : "="
 MIN_HOP             : INT
 MAX_HOP             : INT
 TYPE                : CNAME
@@ -309,6 +312,7 @@ def _data_path_to_entity_name_attribute(data_path):
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph, limit=None):
         self._target_graph = target_graph
+        self._paths = []
         self._where_condition: CONDITION = None
         self._motif = nx.DiGraph()
         self._matches = None
@@ -327,7 +331,7 @@ class _GrandCypherTransformer(Transformer):
 
         for data_path in data_paths:
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
-            if entity_name not in motif_nodes and entity_name not in self._return_edges:
+            if entity_name not in motif_nodes and entity_name not in self._return_edges and entity_name not in self._paths:
                 raise NotImplementedError(f"Unknown entity name: {data_path}")
 
         result = {}
@@ -351,6 +355,20 @@ class _GrandCypherTransformer(Transformer):
                         self._target_graph.nodes[node].get(entity_attribute, None)
                         for node in ret
                     )
+
+            elif entity_name in self._paths:
+                ret = []
+                for mapping, _ in true_matches:
+                    path, nodes = [], list(mapping.values())
+                    for x, node in enumerate(nodes):
+                        # Edge
+                        if x > 0:
+                            path.append(self._target_graph.get_edge_data(nodes[x - 1], node))
+
+                        # Node
+                        path.append(node)
+
+                    ret.append(path)
 
             else:
                 mapping_u, mapping_v = self._return_edges[data_path]
@@ -603,6 +621,8 @@ class _GrandCypherTransformer(Transformer):
             u, ut, js = match_clause[0]
             self._motif.add_node(u.value, __labels__=ut, **js)
             return
+
+        match_clause = match_clause[1:] if not match_clause[0] else match_clause
         for start in range(0, len(match_clause) - 2, 2):
             ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[
                 start : start + 3
@@ -632,6 +652,9 @@ class _GrandCypherTransformer(Transformer):
 
             self._motif.add_node(u, __labels__=ut, **ujs)
             self._motif.add_node(v, __labels__=vt, **vjs)
+
+    def path_clause(self, path_clause: tuple):
+        self._paths.append(path_clause[0])
 
     def where_clause(self, where_clause: tuple):
         self._where_condition = where_clause[0]
