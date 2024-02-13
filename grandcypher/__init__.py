@@ -478,8 +478,7 @@ class _GrandCypherTransformer(Transformer):
 
         # Single match clause iterator
         if iterators and len(iterators) == 1:
-            for x, match in enumerate(iterators[0]):
-                yield match
+            yield from iterators[0]
 
         # Multi match clause, requires a cartesian join
         else:
