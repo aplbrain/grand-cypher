@@ -1157,3 +1157,23 @@ class TestNot:
 
         res = GrandCypher(host).run(qry)
         assert len(res["Instrument"]) == 1
+
+
+class TestPath:
+    def test_path(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+
+        host.add_edge("x", "y", foo="bar")
+        host.add_edge("y", "z",)
+
+        qry = """
+        MATCH P = ()-[r*2]->()
+        RETURN P
+        LIMIT 1
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res["P"][0]) == 5

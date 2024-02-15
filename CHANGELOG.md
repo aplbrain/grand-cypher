@@ -1,6 +1,14 @@
 # CHANGELOG
 
-### **0.5.0** (Unreleased)
+### **0.6.0** (February 15 2024)
+
+> New path group operator
+
+#### Features
+
+-   Support for path group operators (#37)
+
+### **0.5.0** (February 13 2024)
 
 > Lots of language support for new query operators.
 
