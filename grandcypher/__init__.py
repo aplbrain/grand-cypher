@@ -80,11 +80,12 @@ op                  : "==" -> op_eq
 
 
 
-return_clause       : "return"i entity_id ("," entity_id)*
-                    | "return"i entity_id ("," entity_id)* limit_clause
-                    | "return"i entity_id ("," entity_id)* skip_clause
-                    | "return"i entity_id ("," entity_id)* skip_clause limit_clause
+return_clause       : "return"i distinct_return? entity_id ("," entity_id)*
+                    | "return"i distinct_return? entity_id ("," entity_id)* limit_clause
+                    | "return"i distinct_return? entity_id ("," entity_id)* skip_clause
+                    | "return"i distinct_return? entity_id ("," entity_id)* skip_clause limit_clause
 
+distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
 skip_clause         : "skip"i NUMBER
 
@@ -319,6 +320,7 @@ class _GrandCypherTransformer(Transformer):
         self._matche_paths = None
         self._return_requests = []
         self._return_edges = {}
+        self._distinct = False
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
@@ -391,13 +393,17 @@ class _GrandCypherTransformer(Transformer):
             result[data_path] = list(ret)[offset_limit]
 
         return result
-
-    def return_clause(self, clause):
+    
+    def return_clause(self, clause):        
+        # collect all entity identifiers to be returned
         for item in clause:
             if item:
                 if not isinstance(item, str):
                     item = str(item.value)
                 self._return_requests.append(item)
+
+    def distinct_return(self, distinct):
+        self._distinct = True
 
     def limit_clause(self, limit):
         limit = int(limit[-1])
@@ -413,7 +419,18 @@ class _GrandCypherTransformer(Transformer):
         else:
             offset_limit = slice(self._skip, None)
 
-        return self._lookup(self._return_requests, offset_limit=offset_limit)
+        results = self._lookup(self._return_requests, offset_limit=offset_limit)
+
+        if self._distinct:
+
+            # process distinct for each key in results
+            distinct_results = {}
+            for key, values in results.items():
+                # remove duplicates
+                distinct_results[key] = list(set(values))
+            results =  distinct_results
+        
+        return results
 
     def _get_true_matches(self):
         if not self._matches:
