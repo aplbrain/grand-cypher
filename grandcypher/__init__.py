@@ -443,7 +443,21 @@ class _GrandCypherTransformer(Transformer):
             self._return_requests + list(self._order_by_attributes), 
             offset_limit=slice(0, None)
         )
-        
+        if self._order_by:
+            results = self._apply_order_by(results)
+        if self._distinct:
+            results = self._apply_distinct(results)
+        results = self._apply_pagination(results, ignore_limit)
+
+
+        # Exclude order-by-only attributes from the final results
+        results = {
+            key: values for key, values in results.items() if key in self._return_requests
+        }
+
+        return results
+    
+    def _apply_order_by(self, results):
         if self._order_by:
             sort_lists = [(results[field], direction) for field, direction in self._order_by if field in results]
 
@@ -456,35 +470,33 @@ class _GrandCypherTransformer(Transformer):
                 # Reorder all lists in results using sorted indices
                 for key in results:
                     results[key] = [results[key][i] for i in indices]
-
-        if self._distinct:
-            
-            if self._order_by:
-                assert self._order_by_attributes.issubset(self._return_requests), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
-
-            # ordered dict to maintain the first occurrence of each unique tuple based on return requests
-            unique_rows = OrderedDict()
-            
-            # Iterate over each 'row' by index
-            for i in range(len(next(iter(results.values())))):  # assume all columns are of the same length
-                # create a tuple key of all the values from return requests for this row
-                row_key = tuple(results[key][i] for key in self._return_requests if key in results)
-                
-                if row_key not in unique_rows:
-                    unique_rows[row_key] = i  # store the index of the first occurrence of this unique row
-            
-            # construct the results based on unique indices collected
-            distinct_results = {key: [] for key in self._return_requests}
-            for row_key, index in unique_rows.items():
-                for _, key in enumerate(self._return_requests):
-                    distinct_results[key].append(results[key][index])
-            
-            results = distinct_results
         
+        return results
+    
+    def _apply_distinct(self, results):
+        if self._order_by:
+            assert self._order_by_attributes.issubset(self._return_requests), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
 
-
-
+        # ordered dict to maintain the first occurrence of each unique tuple based on return requests
+        unique_rows = OrderedDict()
         
+        # Iterate over each 'row' by index
+        for i in range(len(next(iter(results.values())))):  # assume all columns are of the same length
+            # create a tuple key of all the values from return requests for this row
+            row_key = tuple(results[key][i] for key in self._return_requests if key in results)
+            
+            if row_key not in unique_rows:
+                unique_rows[row_key] = i  # store the index of the first occurrence of this unique row
+        
+        # construct the results based on unique indices collected
+        distinct_results = {key: [] for key in self._return_requests}
+        for row_key, index in unique_rows.items():
+            for _, key in enumerate(self._return_requests):
+                distinct_results[key].append(results[key][index])
+        
+        return distinct_results
+    
+    def _apply_pagination(self, results, ignore_limit):
         # apply LIMIT and SKIP (if set) after ordering
         if self._limit is not None and not ignore_limit:
             start_index = self._skip
@@ -496,12 +508,7 @@ class _GrandCypherTransformer(Transformer):
             for key in results.keys():
                 start_index = self._skip
                 results[key] = results[key][start_index:]
-
-        # Exclude order-by-only attributes from the final results
-        results = {
-            key: values for key, values in results.items() if key in self._return_requests
-        }
-
+        
         return results
 
     def _get_true_matches(self):
