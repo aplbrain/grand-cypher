@@ -8,6 +8,7 @@ to search in a much larger graph database.
 """
 
 from typing import Dict, List, Callable, Tuple
+from collections import OrderedDict
 import random
 import string
 from functools import lru_cache
@@ -437,10 +438,6 @@ class _GrandCypherTransformer(Transformer):
         self._skip = skip
 
     def returns(self, ignore_limit=False):
-        # if self._limit and ignore_limit is False:
-        #     offset_limit = slice(self._skip, self._skip + self._limit)
-        # else:
-        #     offset_limit = slice(self._skip, None)
 
         results = self._lookup(
             self._return_requests + list(self._order_by_attributes), 
@@ -460,20 +457,10 @@ class _GrandCypherTransformer(Transformer):
                 for key in results:
                     results[key] = [results[key][i] for i in indices]
 
-        # import ipdb; ipdb.set_trace()
         if self._distinct:
-            from collections import OrderedDict
-            if self._order_by:
-                # Ensure ORDER BY attributes are included in the return requests
-                assert self._order_by_attributes.issubset(self._return_requests), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
             
-            # # process distinct for each key in results
-            # distinct_results = {}
-            # for key, values in results.items():
-            #     if key in self._return_requests:
-            #         # remove duplicates
-            #         distinct_results[key] = list(set(values))
-            # results =  distinct_results
+            if self._order_by:
+                assert self._order_by_attributes.issubset(self._return_requests), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
 
             # ordered dict to maintain the first occurrence of each unique tuple based on return requests
             unique_rows = OrderedDict()
@@ -489,7 +476,7 @@ class _GrandCypherTransformer(Transformer):
             # construct the results based on unique indices collected
             distinct_results = {key: [] for key in self._return_requests}
             for row_key, index in unique_rows.items():
-                for key_idx, key in enumerate(self._return_requests):
+                for _, key in enumerate(self._return_requests):
                     distinct_results[key].append(results[key][index])
             
             results = distinct_results
