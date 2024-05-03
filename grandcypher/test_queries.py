@@ -1,4 +1,5 @@
 import networkx as nx
+import pytest
 
 from . import _GrandCypherGrammar, _GrandCypherTransformer, GrandCypher
 
@@ -589,7 +590,7 @@ class TestLimitSkip:
 
 
 class TestDistinct:
-    def test_basic_distinct(self):
+    def test_basic_distinct1(self):
         host = nx.DiGraph()
         host.add_node("a", name="Alice")
         host.add_node("b", name="Bob")
@@ -602,6 +603,23 @@ class TestDistinct:
         res = GrandCypher(host).run(qry)
         assert len(res["n.name"]) == 2  # should return "Alice" and "Bob" only once
         assert "Alice" in res["n.name"] and "Bob" in res["n.name"]
+
+    def test_basic_distinct2(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=25)
+        host.add_node("c", name="Carol", age=21)
+        host.add_node("d", name="Alice", age=25)
+        host.add_node("e", name="Greg", age=32)
+
+        qry = """
+        MATCH (n)
+        RETURN DISTINCT n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n.name"]) == 4  # should return "Alice" and "Bob" only once
+        assert "Alice" in res["n.name"] and "Bob" in res["n.name"] and "Carol" in res["n.name"] and "Greg" in res["n.name"]
 
 
     def test_distinct_with_relationships(self):
@@ -669,6 +687,142 @@ class TestDistinct:
         res = GrandCypher(host).run(qry)
         assert len(res["n.name"]) == 2  # "Alice" and "Bob" should be distinct
         assert "Alice" in res["n.name"] and "Bob" in res["n.name"]
+
+
+class TestOrderBy:
+    def test_order_by_single_field_ascending(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Carol", "Alice", "Bob"]
+
+    def test_order_by_single_field_descending(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age DESC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Bob", "Alice", "Carol"]
+
+    def test_order_by_single_field_no_direction_provided(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Carol", "Alice", "Bob"]
+
+    def test_order_by_multiple_fields(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=25)
+        host.add_node("d", name="Dave", age=25)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age ASC, n.name DESC
+        """
+        res = GrandCypher(host).run(qry)
+        # names sorted in descending order where ages are the same
+        assert res["n.name"] == ["Dave", "Carol", "Alice", "Bob"]
+
+    def test_order_by_with_limit(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age ASC LIMIT 2
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Carol", "Alice"]
+
+    def test_order_by_with_skip(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age ASC SKIP 1
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Bob"]
+
+    def test_order_by_with_distinct(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=25)
+        host.add_node("d", name="Alice", age=25)
+        host.add_node("e", name="Greg", age=32)
+
+        qry = """
+        MATCH (n)
+        RETURN DISTINCT n.name, n.age
+        ORDER BY n.age DESC
+        """
+        res = GrandCypher(host).run(qry)
+        # Distinct names, ordered by age where available
+        assert res["n.name"] == ['Greg', 'Bob', 'Alice', 'Carol']
+        assert res["n.age"] == [32, 30, 25, 25]
+
+    def test_error_on_order_by_with_distinct_and_non_returned_field(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=25)
+        host.add_node("d", name="Alice", age=25)
+        host.add_node("e", name="Greg", age=32)
+
+        qry = """
+        MATCH (n)
+        RETURN DISTINCT n.name
+        ORDER BY n.age DESC
+        """
+        # Expect an error since 'n.age' is not included in the RETURN clause but used in ORDER BY
+        with pytest.raises(Exception):
+            res = GrandCypher(host).run(qry)
+
+    def test_order_by_with_non_returned_field(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name ORDER BY n.age ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
 
 class TestVariableLengthRelationship:
