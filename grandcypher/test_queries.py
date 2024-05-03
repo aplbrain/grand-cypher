@@ -588,6 +588,89 @@ class TestLimitSkip:
         assert res["B"] == ["y", "z"]
 
 
+class TestDistinct:
+    def test_basic_distinct(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Alice")  # duplicate name
+
+        qry = """
+        MATCH (n)
+        RETURN DISTINCT n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n.name"]) == 2  # should return "Alice" and "Bob" only once
+        assert "Alice" in res["n.name"] and "Bob" in res["n.name"]
+
+
+    def test_distinct_with_relationships(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Alice")  # duplicate name
+        host.add_edge("a", "b")
+        host.add_edge("c", "b")
+
+        qry = """
+        MATCH (n)-[]->(b)
+        RETURN DISTINCT n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n.name"]) == 1  # should return "Alice" only once
+        assert res["n.name"] == ["Alice"]
+
+
+    def test_distinct_with_limit_and_skip(self):
+        host = nx.DiGraph()
+        for i in range(5):
+            host.add_node(f"a{i}", name="Alice")
+            host.add_node(f"b{i}", name="Bob")
+
+        qry = """
+        MATCH (n)
+        RETURN DISTINCT n.name SKIP 1 LIMIT 1
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n.name"]) == 1  # only one name should be returned
+        assert res["n.name"] == ["Bob"]  # assuming alphabetical order
+
+
+    def test_distinct_on_complex_graph(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Carol")
+        host.add_node("d", name="Alice")  # duplicate name
+        host.add_edge("a", "b")
+        host.add_edge("b", "c")
+        host.add_edge("c", "d")
+
+        qry = """
+        MATCH (n)-[]->(m)
+        RETURN DISTINCT n.name, m.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n.name"]) == 3  # should account for paths without considering duplicate names
+        assert "Alice" in res["n.name"] and "Bob" in res["n.name"] and "Carol" in res["n.name"]
+        assert len(res["m.name"]) == 3  # should account for paths without considering duplicate names
+
+    def test_distinct_with_attributes(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Alice", age=30)  # same name, different attribute
+        host.add_node("c", name="Bob", age=25)
+
+        qry = """
+        MATCH (n)
+        WHERE n.age > 20
+        RETURN DISTINCT n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n.name"]) == 2  # "Alice" and "Bob" should be distinct
+        assert "Alice" in res["n.name"] and "Bob" in res["n.name"]
+
+
 class TestVariableLengthRelationship:
     def test_single_variable_length_relationship(self):
         host = nx.DiGraph()
