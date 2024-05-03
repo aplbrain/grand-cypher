@@ -79,8 +79,8 @@ RETURN
 | `(:Type)` node-labels                      | ✅ Thanks @khoale88! |     |
 | `[:Type]` edge-labels                      | ✅ Thanks @khoale88! |     |
 | Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                    |     |
-| `DISTINCT`                                 | ✅                    |     |
-| `ORDER BY`                                 | ✅                    |     |
+| `DISTINCT`                                 | ✅ Thanks @jackboyla! |     |
+| `ORDER BY`                                 | ✅ Thanks @jackboyla! |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |
