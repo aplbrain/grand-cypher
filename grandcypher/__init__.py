@@ -39,8 +39,8 @@ _GrandCypherGrammar = Lark(
     r"""
 start               : query
 
-query               : many_match_clause where_clause return_clause
-                    | many_match_clause return_clause
+query               : many_match_clause where_clause return_clause order_clause? skip_clause? limit_clause?
+                    | many_match_clause return_clause order_clause? skip_clause? limit_clause?
 
 
 many_match_clause   : (match_clause)+
@@ -81,13 +81,20 @@ op                  : "==" -> op_eq
 
 
 return_clause       : "return"i distinct_return? entity_id ("," entity_id)*
-                    | "return"i distinct_return? entity_id ("," entity_id)* limit_clause
-                    | "return"i distinct_return? entity_id ("," entity_id)* skip_clause
-                    | "return"i distinct_return? entity_id ("," entity_id)* skip_clause limit_clause
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
 skip_clause         : "skip"i NUMBER
+
+order_clause        : "order"i "by"i order_items
+
+order_items         : order_item ("," order_item)*
+
+order_item          : entity_id order_direction?
+
+order_direction     : "ASC"i -> asc
+                    | "DESC"i -> desc
+                    | -> no_direction
 
 
 ?entity_id          : CNAME
@@ -321,6 +328,8 @@ class _GrandCypherTransformer(Transformer):
         self._return_requests = []
         self._return_edges = {}
         self._distinct = False
+        self._order_by = None
+        self._order_by_attributes = set()
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
@@ -402,6 +411,20 @@ class _GrandCypherTransformer(Transformer):
                     item = str(item.value)
                 self._return_requests.append(item)
 
+
+    def order_clause(self, order_clause):
+        self._order_by = []
+        for item in order_clause[0].children:
+            field = str(item.children[0])  # assuming the field name is the first child
+            # Default to 'ASC' if not specified
+            if len(item.children) > 1 and str(item.children[1].data).lower() != 'desc':
+                direction = 'ASC'
+            else:
+                direction = 'DESC'
+            
+            self._order_by.append((field, direction))   # [('n.age', 'DESC'), ...]
+            self._order_by_attributes.add(field)
+
     def distinct_return(self, distinct):
         self._distinct = True
 
@@ -414,22 +437,84 @@ class _GrandCypherTransformer(Transformer):
         self._skip = skip
 
     def returns(self, ignore_limit=False):
-        if self._limit and ignore_limit is False:
-            offset_limit = slice(self._skip, self._skip + self._limit)
-        else:
-            offset_limit = slice(self._skip, None)
+        # if self._limit and ignore_limit is False:
+        #     offset_limit = slice(self._skip, self._skip + self._limit)
+        # else:
+        #     offset_limit = slice(self._skip, None)
 
-        results = self._lookup(self._return_requests, offset_limit=offset_limit)
-
-        if self._distinct:
-
-            # process distinct for each key in results
-            distinct_results = {}
-            for key, values in results.items():
-                # remove duplicates
-                distinct_results[key] = list(set(values))
-            results =  distinct_results
+        results = self._lookup(
+            self._return_requests + list(self._order_by_attributes), 
+            offset_limit=slice(0, None)
+        )
         
+        if self._order_by:
+            sort_lists = [(results[field], direction) for field, direction in self._order_by if field in results]
+
+            if sort_lists:
+                # Generate a list of indices sorted by the specified fields
+                indices = range(len(next(iter(results.values()))))  # Safe because all lists are assumed to be of the same length
+                for sort_list, direction in reversed(sort_lists):  # reverse to ensure the first sort key is primary
+                    indices = sorted(indices, key=lambda i: sort_list[i], reverse=(direction == 'DESC'))
+
+                # Reorder all lists in results using sorted indices
+                for key in results:
+                    results[key] = [results[key][i] for i in indices]
+
+        # import ipdb; ipdb.set_trace()
+        if self._distinct:
+            from collections import OrderedDict
+            if self._order_by:
+                # Ensure ORDER BY attributes are included in the return requests
+                assert self._order_by_attributes.issubset(self._return_requests), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
+            
+            # # process distinct for each key in results
+            # distinct_results = {}
+            # for key, values in results.items():
+            #     if key in self._return_requests:
+            #         # remove duplicates
+            #         distinct_results[key] = list(set(values))
+            # results =  distinct_results
+
+            # ordered dict to maintain the first occurrence of each unique tuple based on return requests
+            unique_rows = OrderedDict()
+            
+            # Iterate over each 'row' by index
+            for i in range(len(next(iter(results.values())))):  # assume all columns are of the same length
+                # create a tuple key of all the values from return requests for this row
+                row_key = tuple(results[key][i] for key in self._return_requests if key in results)
+                
+                if row_key not in unique_rows:
+                    unique_rows[row_key] = i  # store the index of the first occurrence of this unique row
+            
+            # construct the results based on unique indices collected
+            distinct_results = {key: [] for key in self._return_requests}
+            for row_key, index in unique_rows.items():
+                for key_idx, key in enumerate(self._return_requests):
+                    distinct_results[key].append(results[key][index])
+            
+            results = distinct_results
+        
+
+
+
+        
+        # apply LIMIT and SKIP (if set) after ordering
+        if self._limit is not None and not ignore_limit:
+            start_index = self._skip
+            end_index = start_index + self._limit
+            for key in results.keys():
+                results[key] = results[key][start_index:end_index]
+        # else just apply SKIP (if set)
+        else:
+            for key in results.keys():
+                start_index = self._skip
+                results[key] = results[key][start_index:]
+
+        # Exclude order-by-only attributes from the final results
+        results = {
+            key: values for key, values in results.items() if key in self._return_requests
+        }
+
         return results
 
     def _get_true_matches(self):
@@ -471,8 +556,8 @@ class _GrandCypherTransformer(Transformer):
                             self_matches.append(match)
                             self_matche_paths.append(edge_hop_map)
 
-                            # Check if limit reached
-                            if self._is_limit(len(self_matches)):
+                            # Check if limit reached; stop ONLY IF we are not ordering
+                            if self._is_limit(len(self_matches)) and not self._order_by:
                                 complete = True
                                 break
 
