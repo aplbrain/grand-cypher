@@ -712,10 +712,25 @@ class TestOrderBy:
 
         qry = """
         MATCH (n)
-        RETURN n.name ORDER BY n.age DESC
+        RETURN n.name 
+        ORDER BY n.age DESC
         """
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Bob", "Alice", "Carol"]
+
+    def test_order_by_single_field_no_direction_provided(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+
+        qry = """
+        MATCH (n)
+        RETURN n.name 
+        ORDER BY n.age
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
     def test_order_by_multiple_fields(self):
         host = nx.DiGraph()
@@ -755,7 +770,8 @@ class TestOrderBy:
 
         qry = """
         MATCH (n)
-        RETURN n.name ORDER BY n.age ASC SKIP 1
+        RETURN n.name 
+        ORDER BY n.age ASC SKIP 1
         """
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Alice", "Bob"]
