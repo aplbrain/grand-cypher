@@ -1,5 +1,18 @@
 # CHANGELOG
 
+### **0.7.0** (May 4 2024)
+
+> Support for `ORDER BY` and `DISTINCT`
+
+#### Features
+
+-   Support for `ORDER BY` in queries, including `ASC` and `DESC`, and chaining multiple sorts (#41, thanks @jackboyla!)
+-   Support for `DISTINCT` in queries (#40, thanks @jackboyla!)
+
+#### Housekeeping
+
+-   Refactor `return` for readability (#41, thanks @jackboyla!)
+
 ### **0.6.0** (February 15 2024)
 
 > New path group operator
