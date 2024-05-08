@@ -410,9 +410,8 @@ class _GrandCypherTransformer(Transformer):
                     ret.append(path)
 
             else:
-                mapping_u, mapping_v = self._return_edges[data_path]
+                mapping_u, mapping_v = self._return_edges[data_path.split('.')[0]]
                 # We are looking for an edge mapping in the target graph:
-                # import ipdb;ipdb.set_trace()
                 is_hop = self._motif.edges[(mapping_u, mapping_v, 0)]["__is_hop__"]
                 ret = (
                     _get_edge(
@@ -423,9 +422,23 @@ class _GrandCypherTransformer(Transformer):
                 ret = (r[0] if is_hop else r for r in ret)
                 # we keep the original list if len > 2 (edge hop 2+)
 
+                # Get all edge labels from the motif -- this is used to filter the relations for multigraphs
+                motif_edge_labels = set()
+                for edge in self._motif.get_edge_data(mapping_u, mapping_v).values():
+                    if edge.get('__labels__', None):
+                        motif_edge_labels.update(edge['__labels__'])
+
                 if entity_attribute:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
+                    if isinstance(self._motif, nx.MultiDiGraph):
+                        # unroll the relations in the multigraph
+                        unnested_ret = []
+                        for r in ret:
+                            unnested_ret.extend(r.values())
+                        
+                        ret = [r for r in unnested_ret if (len(motif_edge_labels) == 0 or r['__labels__'].issubset(motif_edge_labels))]
+
                     ret = (r.get(entity_attribute, None) for r in ret)
 
             result[data_path] = list(ret)[offset_limit]
@@ -651,7 +664,6 @@ class _GrandCypherTransformer(Transformer):
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
                 new_motif.add_node(n, **motif.nodes[n])
         motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
-        # import ipdb;ipdb.set_trace()
         for u, v, k in motif.edges:   # OutMultiEdgeView([('a', 'b', 0)])  
             new_motifs = []
             min_hop = motif.edges[u, v, k]["__min_hop__"]
