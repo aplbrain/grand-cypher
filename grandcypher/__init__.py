@@ -207,65 +207,56 @@ def _is_edge_attr_match(
     including the special '__labels__' set attribute. This function is adapted 
     for MultiDiGraphs.
 
-    Arguments:
-        motif_edge_id (Tuple[str, str, Union[int, str]]): The motif edge ID
-        host_edge_id (Tuple[str, str, Union[int, str]]): The host edge ID
-        motif (Union[nx.Graph, nx.MultiDiGraph]): The motif graph
-        host (Union[nx.Graph, nx.MultiDiGraph]): The host graph
+    Args:
+        motif_edge_id: The motif edge ID.
+        host_edge_id: The host edge ID.
+        motif: The motif graph.
+        host: The host graph.
 
     Returns:
-        bool: True if the host edge matches the attributes in the motif
+        True if the host edge matches the attributes in the motif.
     """
     motif_u, motif_v = motif_edge_id
     host_u, host_v = host_edge_id
 
-    # Handle the difference in edge access for Graph and MultiDiGraph
-    if isinstance(motif, nx.MultiDiGraph):
-        motif_edges = motif[motif_u][motif_v]
-    else:
-        motif_edges = {0: motif[motif_u][motif_v]}  # Mock single edge
-
-    if isinstance(host, nx.MultiDiGraph):
-        host_edges = host[host_u][host_v]
-    else:
-        host_edges = {0: host[host_u][host_v]}      # Mock single edge
-    # AtlasView({0: {'__labels__': {'friend'}}, 1: {'__labels__': {'colleague'}}})
-    # {'__labels__': {'A'}}  //  {'bar': '1'}
+    # Format edges for both DiGraph and MultiDiGraph
+    motif_edges = _get_edge_attributes(motif, motif_u, motif_v)
+    host_edges = _get_edge_attributes(host, host_u, host_v)
 
     # Aggregate all __labels__ into one set
+    motif_edges = _aggregate_edge_labels(motif_edges)
+    host_edges = _aggregate_edge_labels(host_edges)
 
-    motif_agg = {
-        "__labels__": set()
-    }
-    for edge_id, motif_attr in motif_edges.items():
-        if "__labels__" in motif_attr and motif_attr['__labels__']:
-            motif_agg["__labels__"].update(motif_attr['__labels__'])
-        elif "__labels__" not in motif_attr:
-            motif_agg[edge_id] = motif_attr
-
-    host_agg = {
-        "__labels__": set()
-    }
-    for edge_id, host_attr in host_edges.items():
-        if "__labels__" in host_attr and host_attr['__labels__']:
-            host_agg["__labels__"].update(host_attr['__labels__'])
-        elif "__labels__" not in host_attr:
-            host_agg[edge_id] = host_attr
-
-
-    motif_edge = motif_agg
-    host_edge = host_agg
-
-    for attr, val in motif_edge.items():
+    for attr, val in motif_edges.items():
         if attr == "__labels__":
-            if val and val - host_edge.get("__labels__", set()):
+            if val and val - host_edges.get("__labels__", set()):
                 return False
             continue
-        if host_edge.get(attr) != val:
+        if host_edges.get(attr) != val:
             return False
     
     return True
 
+
+def _get_edge_attributes(graph: Union[nx.Graph, nx.MultiDiGraph], u, v) -> Dict:
+    """
+    Retrieve edge attributes from a graph, handling both Graph and MultiDiGraph.
+    """
+    if isinstance(graph, nx.MultiDiGraph):
+        return graph[u][v]
+    return {0: graph[u][v]}  # Mock single edge for DiGraph
+
+def _aggregate_edge_labels(edges: Dict) -> Dict:
+    """
+    Aggregate '__labels__' attributes from edges into a single set.
+    """
+    aggregated = {"__labels__": set()}
+    for edge_id, attrs in edges.items():
+        if "__labels__" in attrs and attrs["__labels__"]:
+            aggregated["__labels__"].update(attrs["__labels__"])
+        elif "__labels__" not in attrs:
+            aggregated[edge_id] = attrs
+    return aggregated
 
 def _get_entity_from_host(host: nx.DiGraph, entity_name, entity_attribute=None):
     if entity_name in host.nodes():
