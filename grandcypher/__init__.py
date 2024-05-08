@@ -7,7 +7,7 @@ to search in a much larger graph database.
 
 """
 
-from typing import Dict, List, Callable, Tuple
+from typing import Dict, List, Callable, Tuple, Union
 from collections import OrderedDict
 import random
 import string
@@ -119,7 +119,6 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
 
 
-
 LEFT_ANGLE          : "<"
 RIGHT_ANGLE         : ">"
 EQUAL               : "="
@@ -198,27 +197,64 @@ def _is_node_attr_match(
 
 @lru_cache()
 def _is_edge_attr_match(
-    motif_edge_id: Tuple[str, str],
-    host_edge_id: Tuple[str, str],
-    motif: nx.Graph,
-    host: nx.Graph,
+    motif_edge_id: Tuple[str, str, Union[int, str]],
+    host_edge_id: Tuple[str, str, Union[int, str]],
+    motif: Union[nx.Graph, nx.MultiDiGraph],
+    host: Union[nx.Graph, nx.MultiDiGraph]
 ) -> bool:
     """
-    Check if an edge in the host graph matches the attributes in the motif.
-    This also check the __labels__ of edges.
+    Check if an edge in the host graph matches the attributes in the motif, 
+    including the special '__labels__' set attribute. This function is adapted 
+    for MultiDiGraphs.
 
     Arguments:
-        motif_edge_id (str): The motif edge ID
-        host_edge_id (str): The host edge ID
-        motif (nx.Graph): The motif graph
-        host (nx.Graph): The host graph
+        motif_edge_id (Tuple[str, str, Union[int, str]]): The motif edge ID
+        host_edge_id (Tuple[str, str, Union[int, str]]): The host edge ID
+        motif (Union[nx.Graph, nx.MultiDiGraph]): The motif graph
+        host (Union[nx.Graph, nx.MultiDiGraph]): The host graph
 
     Returns:
         bool: True if the host edge matches the attributes in the motif
-
     """
-    motif_edge = motif.edges[motif_edge_id]
-    host_edge = host.edges[host_edge_id]
+    motif_u, motif_v = motif_edge_id
+    host_u, host_v = host_edge_id
+
+    # Handle the difference in edge access for Graph and MultiDiGraph
+    if isinstance(motif, nx.MultiDiGraph):
+        motif_edges = motif[motif_u][motif_v]
+    else:
+        motif_edges = {0: motif[motif_u][motif_v]}  # Mock single edge
+
+    if isinstance(host, nx.MultiDiGraph):
+        host_edges = host[host_u][host_v]
+    else:
+        host_edges = {0: host[host_u][host_v]}      # Mock single edge
+    # AtlasView({0: {'__labels__': {'friend'}}, 1: {'__labels__': {'colleague'}}})
+    # {'__labels__': {'A'}}  //  {'bar': '1'}
+
+    # Aggregate all __labels__ into one set
+
+    motif_agg = {
+        "__labels__": set()
+    }
+    for edge_id, motif_attr in motif_edges.items():
+        if "__labels__" in motif_attr and motif_attr['__labels__']:
+            motif_agg["__labels__"].update(motif_attr['__labels__'])
+        elif "__labels__" not in motif_attr:
+            motif_agg[edge_id] = motif_attr
+
+    host_agg = {
+        "__labels__": set()
+    }
+    for edge_id, host_attr in host_edges.items():
+        if "__labels__" in host_attr and host_attr['__labels__']:
+            host_agg["__labels__"].update(host_attr['__labels__'])
+        elif "__labels__" not in host_attr:
+            host_agg[edge_id] = host_attr
+
+
+    motif_edge = motif_agg
+    host_edge = host_agg
 
     for attr, val in motif_edge.items():
         if attr == "__labels__":
@@ -227,7 +263,7 @@ def _is_edge_attr_match(
             continue
         if host_edge.get(attr) != val:
             return False
-
+    
     return True
 
 
@@ -323,7 +359,7 @@ class _GrandCypherTransformer(Transformer):
         self._target_graph = target_graph
         self._paths = []
         self._where_condition: CONDITION = None
-        self._motif = nx.DiGraph()
+        self._motif = nx.MultiDiGraph()    #nx.MultiDiGraph()      # nx.DiGraph()
         self._matches = None
         self._matche_paths = None
         self._return_requests = []
@@ -385,7 +421,8 @@ class _GrandCypherTransformer(Transformer):
             else:
                 mapping_u, mapping_v = self._return_edges[data_path]
                 # We are looking for an edge mapping in the target graph:
-                is_hop = self._motif.edges[(mapping_u, mapping_v)]["__is_hop__"]
+                # import ipdb;ipdb.set_trace()
+                is_hop = self._motif.edges[(mapping_u, mapping_v, 0)]["__is_hop__"]
                 ret = (
                     _get_edge(
                         self._target_graph, mapping, match_path, mapping_u, mapping_v
@@ -606,7 +643,7 @@ class _GrandCypherTransformer(Transformer):
         # Check if limit reached
         return self._limit and count >= (self._limit + self._skip)
 
-    def _edge_hop_motifs(self, motif: nx.DiGraph) -> List[Tuple[nx.Graph, dict]]:
+    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> List[Tuple[nx.Graph, dict]]:
         """generate a list of edge-hop-expanded motif with edge-hop-map.
 
         Arguments:
@@ -618,19 +655,20 @@ class _GrandCypherTransformer(Transformer):
                 where a real edge path can have more than 2 element (hop >= 2)
                 or it can have 2 same element (hop = 0).
         """
-        new_motif = nx.DiGraph()
+        new_motif = nx.MultiDiGraph()
         for n in motif.nodes:
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
                 new_motif.add_node(n, **motif.nodes[n])
         motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
-        for u, v in motif.edges:
+        # import ipdb;ipdb.set_trace()
+        for u, v, k in motif.edges:   # OutMultiEdgeView([('a', 'b', 0)])  
             new_motifs = []
-            min_hop = motif.edges[u, v]["__min_hop__"]
-            max_hop = motif.edges[u, v]["__max_hop__"]
-            edge_type = motif.edges[u, v]["__labels__"]
+            min_hop = motif.edges[u, v, k]["__min_hop__"]
+            max_hop = motif.edges[u, v, k]["__max_hop__"]
+            edge_type = motif.edges[u, v, k]["__labels__"]
             hops = []
             if min_hop == 0:
-                new_motif = nx.DiGraph()
+                new_motif = nx.MultiDiGraph()
                 new_motif.add_node(u, **motif.nodes[u])
                 new_motifs.append((new_motif, {(u, v): (u, u)}))
             elif min_hop >= 1:
@@ -638,7 +676,7 @@ class _GrandCypherTransformer(Transformer):
                     hops.append(shortuuid())
             for _ in range(max(min_hop, 1), max_hop):
                 new_edges = [u] + hops + [v]
-                new_motif = nx.DiGraph()
+                new_motif = nx.MultiDiGraph()
                 new_motif.add_edges_from(
                     list(zip(new_edges[:-1], new_edges[1:])), __labels__=edge_type
                 )
