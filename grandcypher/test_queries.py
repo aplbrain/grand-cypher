@@ -925,6 +925,29 @@ class TestMultigraphRelations:
         assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}}, {0: {'colleague'}, 1: {'mentor'}}]
         assert res["r.duration"] == [{0: None}, {0: None}, {0: 10, 1: None}]
 
+    def test_multigraph_single_edge_where(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine", age=30)
+        host.add_edge("a", "b", __labels__={"friend"}, years=1, friendly="very")
+        host.add_edge("b", "a", __labels__={"colleague"}, years=2)
+        host.add_edge("b", "a", __labels__={"mentor"}, years=4)
+        host.add_edge("b", "c", __labels__={"chef"}, years=12)
+
+        qry = """
+        MATCH (a)-[r]->(b)
+        WHERE r.friendly == "very" OR r.years == 2
+        RETURN a.name, b.name, r.__labels__, r.years, r.friendly
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice", "Bob"]
+        assert res["b.name"] == ["Bob", "Alice"]
+        assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}, 1: {'mentor'}}]
+        assert res["r.years"] == [{0: 1}, {0: 2, 1: 4}]
+        assert res["r.friendly"] == [{0: 'very'}, {0: None, 1: None}]
+
+
 class TestVariableLengthRelationship:
     def test_single_variable_length_relationship(self):
         host = nx.DiGraph()
