@@ -431,26 +431,25 @@ class _GrandCypherTransformer(Transformer):
                 if entity_attribute:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
-                    if isinstance(self._motif, nx.MultiDiGraph):
-                        # unroll the relations in the multigraph
-                        unnested_ret = []
+                    if isinstance(self._motif, nx.MultiDiGraph) and len(motif_edge_labels) > 0:
+                        # filter the retrieved edge(s) based on the motif edge labels
+                        filtered_ret = []
                         for r in ret:
 
-                            if motif_edge_labels == set():
-                                unnested_ret.append(r)
-                            elif any([i.get('__labels__', None).issubset(motif_edge_labels) for i in r.values()]):
-                                unnested_ret.append(r)
-                        
-                        ret = unnested_ret
+                            if any([i.get('__labels__', None).issubset(motif_edge_labels) for i in r.values()]):
+                                filtered_ret.append(r)
 
-                    n_ret = []
+                        ret = filtered_ret
+
+                    # get the attribute from the retrieved edge(s)
+                    ret_with_attr = []
                     for r in ret:
-                        new_ret = {}
+                        r_attr = {}
                         for i, v in r.items():
-                            new_ret[i] = v.get(entity_attribute, None)
-                        n_ret.append(new_ret)
+                            r_attr[i] = v.get(entity_attribute, None)
+                        ret_with_attr.append(r_attr)
 
-                    ret = n_ret
+                    ret = ret_with_attr
 
             result[data_path] = list(ret)[offset_limit]
 
@@ -710,7 +709,7 @@ class _GrandCypherTransformer(Transformer):
         new_motifs = []
         for motif_1, mapping_1 in motifs_1:
             for motif_2, mapping_2 in motifs_2:
-                motif = nx.MultiDiGraph()
+                motif = nx.DiGraph()
                 motif.add_nodes_from(motif_1.nodes.data())
                 motif.add_nodes_from(motif_2.nodes.data())
                 motif.add_edges_from(motif_1.edges.data())
