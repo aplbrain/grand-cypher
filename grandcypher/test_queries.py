@@ -825,6 +825,106 @@ class TestOrderBy:
         assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
 
+class TestMultigraphRelations:
+    def test_query_with_multiple_relations(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Charlie", age=25)
+        host.add_node("d", name="Diana", age=25)
+
+        # Adding edges with labels for different types of relationship_type
+        host.add_edge("a", "b", __labels__={"friends"})
+        host.add_edge("a", "b", __labels__={"colleagues"})
+        host.add_edge("a", "c", __labels__={"colleagues"})
+        host.add_edge("b", "d", __labels__={"family"})
+        host.add_edge("c", "d", __labels__={"family"})
+        host.add_edge("c", "d", __labels__={"friends"})
+        host.add_edge("d", "a", __labels__={"friends"})
+        host.add_edge("d", "a", __labels__={"colleagues"})
+
+        qry = """
+        MATCH (n)-[r:friends]->(m)
+        RETURN n.name, m.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ['Alice', 'Charlie', 'Diana']
+        assert res["m.name"] == ['Bob', 'Diana', 'Alice']
+
+    def test_multiple_edges_specific_attribute(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=30)
+        host.add_node("b", name="Bob", age=30)
+        host.add_edge("a", "b", __labels__={"colleague"}, years=3)
+        host.add_edge("a", "b", __labels__={"friend"}, years=5)
+        host.add_edge("a", "b", __labels__={"enemy"}, hatred=10)
+
+        qry = """
+        MATCH (a)-[r:friend]->(b)
+        RETURN a.name, b.name, r.years
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice"]
+        assert res["b.name"] == ["Bob"]
+        assert res["r.years"] == [{0: 3, 1: 5, 2: None}]   # should return None when attr is missing
+
+    def test_edge_directionality(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_edge("a", "b", __labels__={"friend"}, years=1)
+        host.add_edge("b", "a", __labels__={"colleague"}, years=2)
+        host.add_edge("b", "a", __labels__={"mentor"}, years=4)
+
+        qry = """
+        MATCH (a)-[r]->(b)
+        RETURN a.name, b.name, r.__labels__, r.years
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice", "Bob"]
+        assert res["b.name"] == ["Bob", "Alice"]
+        assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}, 1: {'mentor'}}]
+        assert res["r.years"] == [{0: 1}, {0: 2, 1: 4}]
+
+
+    def test_query_with_missing_edge_attribute(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=30)
+        host.add_node("b", name="Bob", age=40)
+        host.add_node("c", name="Charlie", age=50)
+        host.add_edge("a", "b", __labels__={"friend"}, years=3)
+        host.add_edge("a", "c", __labels__={"colleague"}, years=10)
+        host.add_edge("b", "c", __labels__={"colleague"}, duration=10)
+        host.add_edge("b", "c", __labels__={"mentor"}, years=2)
+
+        qry = """
+        MATCH (a)-[r:colleague]->(b)
+        RETURN a.name, b.name, r.duration
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice", "Bob"]
+        assert res["b.name"] == ["Charlie", "Charlie"]
+        assert res["r.duration"] == [{0: None}, {0: 10, 1: None}]   # should return None when attr is missing
+
+        qry = """
+        MATCH (a)-[r:colleague]->(b)
+        RETURN a.name, b.name, r.years
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice", "Bob"]
+        assert res["b.name"] == ["Charlie", "Charlie"]
+        assert res["r.years"] == [{0: 10}, {0: None, 1: 2}]
+
+        qry = """
+        MATCH (a)-[r]->(b)
+        RETURN a.name, b.name, r.__labels__, r.duration
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ['Alice', 'Alice', 'Bob']
+        assert res["b.name"] == ['Bob', 'Charlie', 'Charlie']
+        assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}}, {0: {'colleague'}, 1: {'mentor'}}]
+        assert res["r.duration"] == [{0: None}, {0: None}, {0: 10, 1: None}]
+
 class TestVariableLengthRelationship:
     def test_single_variable_length_relationship(self):
         host = nx.DiGraph()
