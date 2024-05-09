@@ -350,7 +350,7 @@ class _GrandCypherTransformer(Transformer):
         self._target_graph = target_graph
         self._paths = []
         self._where_condition: CONDITION = None
-        self._motif = nx.MultiDiGraph()    #nx.MultiDiGraph()      # nx.DiGraph()
+        self._motif = nx.MultiDiGraph()     # nx.DiGraph()
         self._matches = None
         self._matche_paths = None
         self._return_requests = []
@@ -435,13 +435,25 @@ class _GrandCypherTransformer(Transformer):
                         # unroll the relations in the multigraph
                         unnested_ret = []
                         for r in ret:
-                            unnested_ret.extend(r.values())
-                        
-                        ret = [r for r in unnested_ret if (len(motif_edge_labels) == 0 or r['__labels__'].issubset(motif_edge_labels))]
 
-                    ret = (r.get(entity_attribute, None) for r in ret)
+                            if motif_edge_labels == set():
+                                unnested_ret.append(r)
+                            elif any([i.get('__labels__', None).issubset(motif_edge_labels) for i in r.values()]):
+                                unnested_ret.append(r)
+                        
+                        ret = unnested_ret
+
+                    n_ret = []
+                    for r in ret:
+                        new_ret = {}
+                        for i, v in r.items():
+                            new_ret[i] = v.get(entity_attribute, None)
+                        n_ret.append(new_ret)
+
+                    ret = n_ret
 
             result[data_path] = list(ret)[offset_limit]
+
 
         return result
     
@@ -698,7 +710,7 @@ class _GrandCypherTransformer(Transformer):
         new_motifs = []
         for motif_1, mapping_1 in motifs_1:
             for motif_2, mapping_2 in motifs_2:
-                motif = nx.DiGraph()
+                motif = nx.MultiDiGraph()
                 motif.add_nodes_from(motif_1.nodes.data())
                 motif.add_nodes_from(motif_2.nodes.data())
                 motif.add_edges_from(motif_1.edges.data())
