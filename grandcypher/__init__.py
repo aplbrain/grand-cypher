@@ -693,7 +693,7 @@ class _GrandCypherTransformer(Transformer):
                 new_edges = [u] + hops + [v]
                 new_motif = nx.MultiDiGraph()
                 new_motif.add_edges_from(
-                    list(zip(new_edges[:-1], new_edges[1:])), __labels__=edge_type
+                    zip(new_edges, new_edges[1:]), __labels__=edge_type
                 )
                 new_motif.add_node(u, **motif.nodes[u])
                 new_motif.add_node(v, **motif.nodes[v])
