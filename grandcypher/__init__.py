@@ -204,17 +204,18 @@ def _is_edge_attr_match(
 ) -> bool:
     """
     Check if an edge in the host graph matches the attributes in the motif, 
-    including the special '__labels__' set attribute. This function is adapted 
-    for MultiDiGraphs.
+    including the special '__labels__' set attribute. 
+    This function formats edges into 
+    nx.MultiDiGraph format i.e {0: first_relation, 1: ...}.
 
-    Args:
-        motif_edge_id: The motif edge ID.
-        host_edge_id: The host edge ID.
-        motif: The motif graph.
-        host: The host graph.
+    Arguments:
+        motif_edge_id (str): The motif edge ID
+        host_edge_id (str): The host edge ID
+        motif (nx.Graph): The motif graph
+        host (nx.Graph): The host graph
 
     Returns:
-        True if the host edge matches the attributes in the motif.
+        bool: True if the host edge matches the attributes in the motif
     """
     motif_u, motif_v = motif_edge_id
     host_u, host_v = host_edge_id
@@ -350,7 +351,7 @@ class _GrandCypherTransformer(Transformer):
         self._target_graph = target_graph
         self._paths = []
         self._where_condition: CONDITION = None
-        self._motif = nx.MultiDiGraph()     # nx.DiGraph()
+        self._motif = nx.MultiDiGraph()
         self._matches = None
         self._matche_paths = None
         self._return_requests = []
