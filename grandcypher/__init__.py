@@ -324,6 +324,7 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
             if isinstance(host, nx.MultiDiGraph):
                 # if any of the relations between nodes satisfies condition, return True
                 r_vals = _get_entity_from_host(host, *host_entity_id)
+                r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
                 val = any(operator(r_val, value) for r_val in r_vals)
             else:
                 val = operator(_get_entity_from_host(host, *host_entity_id), value)
