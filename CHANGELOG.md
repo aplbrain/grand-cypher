@@ -1,5 +1,13 @@
 # CHANGELOG
 
+### **0.8.0** (May 14 2024)
+
+> Support for MultiDiGraphs.
+
+#### Features
+
+-   Support for MultiDiGraphs (#42, thanks @jackboyla!)
+
 ### **0.7.0** (May 4 2024)
 
 > Support for `ORDER BY` and `DISTINCT`
