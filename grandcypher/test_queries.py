@@ -1002,10 +1002,15 @@ class TestMultigraphRelations:
 
         qry = """
         MATCH (a)-[r]->(b)
-        WHERE a.name == "Alice" OR b.name == "Bob"
+        WHERE a.name == "Alice"
         RETURN a.name, b.name, r.__labels__, r.years, r.friendly
         """
         res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice"]
+        assert res["b.name"] == ["Bob"]
+        assert res["r.__labels__"] == [{0: {'friend'}}]
+        assert res["r.years"] == [{0: 1}]
+        assert res["r.friendly"] == [{0: 'very'}]
 
 
 class TestVariableLengthRelationship:
