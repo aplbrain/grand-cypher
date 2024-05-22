@@ -235,7 +235,7 @@ def _is_edge_attr_match(
             continue
         if host_edges.get(attr) != val:
             return False
-
+    
     return True
 
 
@@ -259,7 +259,6 @@ def _aggregate_edge_labels(edges: Dict) -> Dict:
         elif "__labels__" not in attrs:
             aggregated[edge_id] = attrs
     return aggregated
-
 
 def _get_entity_from_host(
     host: Union[nx.DiGraph, nx.MultiDiGraph], entity_name, entity_attribute=None
@@ -330,6 +329,7 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
             if isinstance(host, nx.MultiDiGraph):
                 # if any of the relations between nodes satisfies condition, return True
                 r_vals = _get_entity_from_host(host, *host_entity_id)
+                r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
                 val = any(operator(r_val, value) for r_val in r_vals)
             else:
                 val = operator(_get_entity_from_host(host, *host_entity_id), value)
@@ -484,6 +484,7 @@ class _GrandCypherTransformer(Transformer):
                     ret = ret_with_attr
 
             result[data_path] = list(ret)[offset_limit]
+
 
         return result
 
@@ -726,6 +727,7 @@ class _GrandCypherTransformer(Transformer):
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
                 new_motif.add_node(n, **motif.nodes[n])
         motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
+
         for u, v, k in motif.edges:  # OutMultiEdgeView([('a', 'b', 0)])
             new_motifs = []
             min_hop = motif.edges[u, v, k]["__min_hop__"]

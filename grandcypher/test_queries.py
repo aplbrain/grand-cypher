@@ -3,30 +3,33 @@ import pytest
 
 from . import _GrandCypherGrammar, _GrandCypherTransformer, GrandCypher
 
+ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
 
 class TestWorking:
-    def test_simple_structural_match(self):
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_structural_match(self, graph_type):
         tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         RETURN A
         """
         )
-        host = nx.DiGraph()
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         gct = _GrandCypherTransformer(host)
         gct.transform(tree)
         assert len(gct._get_true_matches()) == 2
 
-    def test_simple_structural_match_returns_nodes(self):
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_structural_match_returns_nodes(self, graph_type):
         tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         RETURN A
         """
         )
-        host = nx.DiGraph()
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         gct = _GrandCypherTransformer(host)
@@ -35,14 +38,15 @@ class TestWorking:
         assert "A" in returns
         assert len(returns["A"]) == 2
 
-    def test_simple_structural_match_returns_node_attributes(self):
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_structural_match_returns_node_attributes(self, graph_type):
         tree = _GrandCypherGrammar.parse(
             """
         MATCH (A)-[B]->(C)
         RETURN A.dinnertime
         """
         )
-        host = nx.DiGraph()
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_node("x", dinnertime="no thanks I already ate")
@@ -55,8 +59,9 @@ class TestWorking:
 
 
 class TestSimpleAPI:
-    def test_simple_api(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_node("x", dinnertime="no thanks I already ate")
@@ -68,8 +73,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A.dinnertime"]) == 2
 
-    def test_simple_api_triangles(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_triangles(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")
@@ -83,8 +89,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
 
-    def test_simple_api_single_node_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_single_node_where(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")
@@ -98,8 +105,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
-    def test_simple_api_single_node_multi_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_single_node_multi_where(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")
@@ -114,8 +122,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
-    def test_simple_api_single_node_multi_where_2(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_single_node_multi_where_2(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")
@@ -132,8 +141,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 2
 
-    def test_null_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_null_where(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo="foo")
         host.add_node("y")
         host.add_node("z")
@@ -145,8 +155,9 @@ class TestSimpleAPI:
         """
         assert len(GrandCypher(host).run(qry)["A.foo"]) == 2
 
-    def test_simple_api_multi_node_multi_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_multi_node_multi_where(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")
@@ -163,8 +174,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
-    def test_simple_api_anonymous_edge(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_anonymous_edge(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("z", "x")
@@ -183,8 +195,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
 
-    def test_simple_api_anonymous_node(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_anonymous_node(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z")
         host.add_edge("x", "z")
@@ -206,8 +219,9 @@ class TestSimpleAPI:
         assert list(res.values())[0] == ["x", "x", "y"]
         print(res)
 
-    def test_single_edge_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_single_edge_where(self, graph_type):
+        host = graph_type()
         host.add_edge("y", "z")
 
         qry = """
@@ -224,8 +238,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["AB"]) == 1
 
-    def test_simple_api_single_edge_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_single_edge_where(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z", foo="bar")
         host.add_edge("z", "x")
@@ -238,8 +253,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
-    def test_simple_api_two_edge_where_clauses_same_edge(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_two_edge_where_clauses_same_edge(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z", foo="bar", weight=12)
         host.add_edge("z", "x")
@@ -253,8 +269,9 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["AB"]) == 1
 
-    def test_simple_api_two_edge_where_clauses_diff_edge(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_api_two_edge_where_clauses_diff_edge(self, graph_type):
+        host = graph_type()
         host.add_edge("x", "y")
         host.add_edge("y", "z", foo="bar")
         host.add_edge("z", "x", weight=12)
@@ -282,12 +299,13 @@ class TestKarate:
 
 
 class TestDictAttributes:
-    def test_node_dict(self):
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_dict(self, graph_type):
         qry = """
         MATCH (A {type: "foo"})-[]->(B)
         RETURN A
         """
-        host = nx.DiGraph()
+        host = graph_type()
         host.add_node("Y", type="foo")
         host.add_node("X", type="bar")
         host.add_edge("X", "Y")
@@ -296,8 +314,9 @@ class TestDictAttributes:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
-    def test_null_value(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_null_value(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo="foo")
         host.add_node("y")
         host.add_node("z")
@@ -354,7 +373,8 @@ class TestLimitSkip:
             ][10:20]
         )
 
-    def test_single_node_query(self):
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_single_node_query(self, graph_type):
         """
         Test that you can search for individual nodes with properties
         """
@@ -365,12 +385,13 @@ class TestLimitSkip:
         RETURN c
         """
 
-        host = nx.DiGraph()
+        host = graph_type()
         host.add_node("London", type="City", name="London")
 
         assert len(GrandCypher(host).run(qry)["c"]) == 1
 
-    def test_multi_node_query(self):
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_multi_node_query(self, graph_type):
         """
         Test that you can search for individual nodes with properties
         """
@@ -382,15 +403,16 @@ class TestLimitSkip:
         RETURN b, c
         """
 
-        host = nx.DiGraph()
+        host = graph_type()
         host.add_node("London", type="City", name="London")
         host.add_node("NYC", type="City", name="NYC")
         host.add_edge("London", "NYC")
 
         assert len(GrandCypher(host).run(qry)["c"]) == 1
 
-    def test_left_or_right_direction_with_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_left_or_right_direction_with_where(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
@@ -413,8 +435,9 @@ class TestLimitSkip:
         assert len(res) == 1
         assert list(res.values())[0] == ["x"]
 
-    def test_disconected_multi_match(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_disconected_multi_match(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
@@ -429,8 +452,9 @@ class TestLimitSkip:
         assert res["C.name"] == ["x", "y", "x", "y"]
         assert res["D.name"] == ["y", "z", "y", "z"]
 
-    def test_chained_edges(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_chained_edges(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
@@ -471,8 +495,9 @@ class TestLimitSkip:
         assert res["B.name"] == ["y"]
         assert res["C.name"] == ["z"]
 
-    def test_chained_backward_edges(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_chained_backward_edges(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
@@ -529,8 +554,9 @@ class TestLimitSkip:
         assert res["B.name"] == ["y"]
         assert res["C.name"] == ["z"]
 
-    def test_undirected(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_undirected(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
@@ -556,8 +582,9 @@ class TestLimitSkip:
         assert res["A.name"] == ["x"]
         assert res["B.name"] == ["y"]
 
-    def test_anonymous_node(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_anonymous_node(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
@@ -570,8 +597,9 @@ class TestLimitSkip:
         assert len(res) == 1
         assert res["B.name"] == ["y", "y"]
 
-    def test_complex_where(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_complex_where(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -590,8 +618,9 @@ class TestLimitSkip:
 
 
 class TestDistinct:
-    def test_basic_distinct1(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_basic_distinct1(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice")
         host.add_node("b", name="Bob")
         host.add_node("c", name="Alice")  # duplicate name
@@ -604,8 +633,9 @@ class TestDistinct:
         assert len(res["n.name"]) == 2  # should return "Alice" and "Bob" only once
         assert "Alice" in res["n.name"] and "Bob" in res["n.name"]
 
-    def test_basic_distinct2(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_basic_distinct2(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=25)
@@ -622,8 +652,9 @@ class TestDistinct:
         assert "Alice" in res["n.name"] and "Bob" in res["n.name"] and "Carol" in res["n.name"] and "Greg" in res["n.name"]
 
 
-    def test_distinct_with_relationships(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_distinct_with_relationships(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice")
         host.add_node("b", name="Bob")
         host.add_node("c", name="Alice")  # duplicate name
@@ -639,8 +670,9 @@ class TestDistinct:
         assert res["n.name"] == ["Alice"]
 
 
-    def test_distinct_with_limit_and_skip(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_distinct_with_limit_and_skip(self, graph_type):
+        host = graph_type()
         for i in range(5):
             host.add_node(f"a{i}", name="Alice")
             host.add_node(f"b{i}", name="Bob")
@@ -654,8 +686,9 @@ class TestDistinct:
         assert res["n.name"] == ["Bob"]  # assuming alphabetical order
 
 
-    def test_distinct_on_complex_graph(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_distinct_on_complex_graph(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice")
         host.add_node("b", name="Bob")
         host.add_node("c", name="Carol")
@@ -673,8 +706,9 @@ class TestDistinct:
         assert "Alice" in res["n.name"] and "Bob" in res["n.name"] and "Carol" in res["n.name"]
         assert len(res["m.name"]) == 3  # should account for paths without considering duplicate names
 
-    def test_distinct_with_attributes(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_distinct_with_attributes(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Alice", age=30)  # same name, different attribute
         host.add_node("c", name="Bob", age=25)
@@ -690,8 +724,9 @@ class TestDistinct:
 
 
 class TestOrderBy:
-    def test_order_by_single_field_ascending(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_single_field_ascending(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=20)
@@ -704,8 +739,9 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
-    def test_order_by_single_field_descending(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_single_field_descending(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=20)
@@ -718,8 +754,9 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Bob", "Alice", "Carol"]
 
-    def test_order_by_single_field_no_direction_provided(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_single_field_no_direction_provided(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=20)
@@ -732,8 +769,9 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
-    def test_order_by_multiple_fields(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_multiple_fields(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=25)
@@ -748,8 +786,9 @@ class TestOrderBy:
         # names sorted in descending order where ages are the same
         assert res["n.name"] == ["Dave", "Carol", "Alice", "Bob"]
 
-    def test_order_by_with_limit(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_with_limit(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=20)
@@ -762,8 +801,9 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Carol", "Alice"]
 
-    def test_order_by_with_skip(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_with_skip(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=20)
@@ -776,8 +816,9 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Alice", "Bob"]
 
-    def test_order_by_with_distinct(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_with_distinct(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=25)
@@ -794,8 +835,9 @@ class TestOrderBy:
         assert res["n.name"] == ['Greg', 'Bob', 'Alice', 'Carol']
         assert res["n.age"] == [32, 30, 25, 25]
 
-    def test_error_on_order_by_with_distinct_and_non_returned_field(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_error_on_order_by_with_distinct_and_non_returned_field(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=25)
@@ -811,8 +853,9 @@ class TestOrderBy:
         with pytest.raises(Exception):
             res = GrandCypher(host).run(qry)
 
-    def test_order_by_with_non_returned_field(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_with_non_returned_field(self, graph_type):
+        host = graph_type()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
         host.add_node("c", name="Carol", age=20)
@@ -947,10 +990,33 @@ class TestMultigraphRelations:
         assert res["r.years"] == [{0: 1}, {0: 2, 1: 4}]
         assert res["r.friendly"] == [{0: 'very'}, {0: None, 1: None}]
 
+    def test_multigraph_where_node_attribute(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine", age=30)
+        host.add_edge("a", "b", __labels__={"friend"}, years=1, friendly="very")
+        host.add_edge("b", "a", __labels__={"colleague"}, years=2)
+        host.add_edge("b", "a", __labels__={"mentor"}, years=4)
+        host.add_edge("b", "c", __labels__={"chef"}, years=12)
+
+        qry = """
+        MATCH (a)-[r]->(b)
+        WHERE a.name == "Alice"
+        RETURN a.name, b.name, r.__labels__, r.years, r.friendly
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["a.name"] == ["Alice"]
+        assert res["b.name"] == ["Bob"]
+        assert res["r.__labels__"] == [{0: {'friend'}}]
+        assert res["r.years"] == [{0: 1}]
+        assert res["r.friendly"] == [{0: 'very'}]
+
 
 class TestVariableLengthRelationship:
-    def test_single_variable_length_relationship(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_single_variable_length_relationship(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -978,7 +1044,12 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["y", "z", "x"]
-        assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
+        assert graph_type in ACCEPTED_GRAPH_TYPES
+        if graph_type is nx.DiGraph:
+            assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
+        elif graph_type is nx.MultiDiGraph:
+            # MultiDiGraphs return a list of dictionaries to accommodate multiple edges between nodes
+            assert res["r"] == [[{0: {'bar': '1'}}], [{0: {'bar': '2'}}], [{0: {'bar': '3'}}]]
 
         qry = """
         MATCH (A)-[r*2]->(B)
@@ -989,14 +1060,23 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["z", "x", "y"]
-        assert res["r"] == [
-            [{"bar": "1"}, {"bar": "2"}],
-            [{"bar": "2"}, {"bar": "3"}],
-            [{"bar": "3"}, {"bar": "1"}],
-        ]
+        assert graph_type in ACCEPTED_GRAPH_TYPES
+        if graph_type is nx.DiGraph:
+            assert res["r"] == [
+                [{"bar": "1"}, {"bar": "2"}],
+                [{"bar": "2"}, {"bar": "3"}],
+                [{"bar": "3"}, {"bar": "1"}],
+            ]
+        elif graph_type is nx.MultiGraph:
+            assert res["r"] == [
+                [{0: {'bar': '1'}}, {1: {'bar': '2'}}],
+                [{0: {'bar': '2'}}, {1: {'bar': '3'}}],
+                [{0: {'bar': '3'}}, {1: {'bar': '1'}}],
+            ]
 
-    def test_complex_variable_length_relationship(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_complex_variable_length_relationship(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -1013,22 +1093,35 @@ class TestVariableLengthRelationship:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
-        assert res["r"] == [
-            [None],
-            [None],
-            [None],
-            [{"bar": "1"}],
-            [{"bar": "2"}],
-            [{"bar": "3"}],
-            [{"bar": "1"}, {"bar": "2"}],
-            [{"bar": "2"}, {"bar": "3"}],
-            [{"bar": "3"}, {"bar": "1"}],
-        ]
+        assert graph_type in ACCEPTED_GRAPH_TYPES
+        if graph_type is nx.DiGraph:
+            assert res["r"] == [
+                [None],
+                [None],
+                [None],
+                [{"bar": "1"}],
+                [{"bar": "2"}],
+                [{"bar": "3"}],
+                [{"bar": "1"}, {"bar": "2"}],
+                [{"bar": "2"}, {"bar": "3"}],
+                [{"bar": "3"}, {"bar": "1"}],
+            ]
+        elif graph_type is nx.MultiDiGraph:
+            assert res["r"] == [
+                [None], [None], [None], 
+                [{0: {'bar': '1'}}], 
+                [{0: {'bar': '2'}}], 
+                [{0: {'bar': '3'}}], 
+                [{0: {'bar': '1'}}, {0: {'bar': '2'}}], 
+                [{0: {'bar': '2'}}, {0: {'bar': '3'}}], 
+                [{0: {'bar': '3'}}, {0: {'bar': '1'}}]
+            ]
 
 
 class TestType:
-    def test_host_no_edge_type(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_host_no_edge_type(self, graph_type):
+        host = graph_type()
         host.add_node("x")
         host.add_node("y")
         host.add_node("z")
@@ -1046,8 +1139,9 @@ class TestType:
         assert res["A"] == []
         assert res["B"] == []
 
-    def test_edge_type(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_edge_type(self, graph_type):
+        host = graph_type()
         host.add_node("x")
         host.add_node("y")
         host.add_node("z")
@@ -1086,8 +1180,9 @@ class TestType:
         assert res["A"] == ["y"]
         assert res["B"] == ["z"]
 
-    def test_edge_type_hop(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_edge_type_hop(self, graph_type):
+        host = graph_type()
         host.add_node("x")
         host.add_node("y")
         host.add_node("z")
@@ -1125,20 +1220,35 @@ class TestType:
         assert len(res) == 3
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
-        assert res["r"] == [
-            [None],
-            [None],
-            [None],
-            [{"__labels__": {"Edge", "XY"}}],
-            [{"__labels__": {"Edge", "YZ"}}],
-            [{"__labels__": {"Edge", "ZX"}}],
-            [{"__labels__": {"Edge", "XY"}}, {"__labels__": {"Edge", "YZ"}}],
-            [{"__labels__": {"Edge", "YZ"}}, {"__labels__": {"Edge", "ZX"}}],
-            [{"__labels__": {"Edge", "ZX"}}, {"__labels__": {"Edge", "XY"}}],
-        ]
+        assert graph_type in ACCEPTED_GRAPH_TYPES
+        if graph_type is nx.DiGraph:
+            assert res["r"] == [
+                [None],
+                [None],
+                [None],
+                [{"__labels__": {"Edge", "XY"}}],
+                [{"__labels__": {"Edge", "YZ"}}],
+                [{"__labels__": {"Edge", "ZX"}}],
+                [{"__labels__": {"Edge", "XY"}}, {"__labels__": {"Edge", "YZ"}}],
+                [{"__labels__": {"Edge", "YZ"}}, {"__labels__": {"Edge", "ZX"}}],
+                [{"__labels__": {"Edge", "ZX"}}, {"__labels__": {"Edge", "XY"}}],
+            ]
+        elif graph_type is nx.MultiDiGraph:
+            assert res["r"] == [
+                [None], 
+                [None], 
+                [None], 
+                [{0: {'__labels__': {'Edge', 'XY'}}}], 
+                [{0: {'__labels__': {'Edge', 'YZ'}}}], 
+                [{0: {'__labels__': {'Edge', 'ZX'}}}], 
+                [{0: {'__labels__': {'Edge', 'XY'}}}, {0: {'__labels__': {'Edge', 'YZ'}}}], 
+                [{0: {'__labels__': {'Edge', 'YZ'}}}, {0: {'__labels__': {'Edge', 'ZX'}}}], 
+                [{0: {'__labels__': {'Edge', 'ZX'}}}, {0: {'__labels__': {'Edge', 'XY'}}}]
+            ]
 
-    def test_host_no_node_type(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_host_no_node_type(self, graph_type):
+        host = graph_type()
         host.add_node("x")
         host.add_node("y")
         host.add_node("z")
@@ -1156,8 +1266,9 @@ class TestType:
         assert res["A"] == []
         assert res["B"] == []
 
-    def test_node_type(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_type(self, graph_type):
+        host = graph_type()
         host.add_node("x", __labels__=set(["Node", "X"]), foo="1")
         host.add_node("y", __labels__=set(["Node", "Y"]), foo="2")
         host.add_node("z", __labels__=set(["Node", "Z"]), foo="3")
@@ -1196,8 +1307,9 @@ class TestType:
         assert res["A"] == ["y"]
         assert res["B"] == ["z"]
 
-    def test_node_type_edge_hop(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_type_edge_hop(self, graph_type):
+        host = graph_type()
         host.add_node("x", __labels__=set(["Node", "X"]), foo="1")
         host.add_node("y", __labels__=set(["Node", "Y"]), foo="2")
         host.add_node("z", __labels__=set(["Node", "Z"]), foo="3")
@@ -1237,8 +1349,9 @@ class TestType:
 
 
 class TestSpecialCases:
-    def test_two_edge_hop_with_edge_node_type(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_two_edge_hop_with_edge_node_type(self, graph_type):
+        host = graph_type()
         host.add_node("C_1_1", __labels__=set(["X"]), head=True)
         host.add_node("C_1_2", __labels__=set(["X"]))
         host.add_node("C_1_3", __labels__=set(["X"]))
@@ -1281,8 +1394,9 @@ class TestSpecialCases:
 
 
 class TestComments:
-    def test_line_comments(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_line_comments(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -1316,8 +1430,9 @@ class TestComments:
 
         res = GrandCypher(host).run(qry)
 
-    def test_end_of_line_comments(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_end_of_line_comments(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -1348,8 +1463,9 @@ class TestComments:
 
         res = GrandCypher(host).run(qry)
 
-    def test_every_line_comments(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_every_line_comments(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -1367,8 +1483,9 @@ class TestComments:
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
 
-    def test_mid_query_comment(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_mid_query_comment(self, graph_type):
+        host = graph_type()
         host.add_node("x", foo=12)
         host.add_node("y", foo=13)
         host.add_node("z", foo=16)
@@ -1393,8 +1510,9 @@ class TestComments:
 
 
 class TestStringOperators:
-    def test_starts_with(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_starts_with(self, graph_type):
+        host = graph_type()
         host.add_node(1, name="Ford Prefect")
         host.add_node(2, name="Arthur Dent")
         host.add_edge(1, 2)
@@ -1408,8 +1526,9 @@ class TestStringOperators:
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
 
-    def test_ends_with(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_ends_with(self, graph_type):
+        host = graph_type()
         host.add_node(1, name="Ford Prefect")
         host.add_node(2, name="Arthur Dent")
         host.add_edge(1, 2)
@@ -1432,8 +1551,9 @@ class TestStringOperators:
         res = GrandCypher(host).run(qry)
         assert len(res["A"]) == 2
 
-    def test_contains(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_contains(self, graph_type):
+        host = graph_type()
         host.add_node(1, name="Ford Prefect")
         host.add_node(2, name="Arthur Dent")
         host.add_edge(1, 2)
@@ -1458,8 +1578,9 @@ class TestStringOperators:
 
 
 class TestNot:
-    def test_not(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_not(self, graph_type):
+        host = graph_type()
         host.add_node(1, name="Ford Prefect")
         host.add_node(2, name="Arthur Dent")
         host.add_edge(1, 2)
@@ -1473,8 +1594,9 @@ class TestNot:
         res = GrandCypher(host).run(qry)
         assert len(res["A"]) == 1
 
-    def test_doublenot(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_doublenot(self, graph_type):
+        host = graph_type()
         host.add_node(1, name="Ford Prefect")
         host.add_node(2, name="Arthur Dent")
         host.add_edge(1, 2)
@@ -1488,8 +1610,9 @@ class TestNot:
         res = GrandCypher(host).run(qry)
         assert len(res["A"]) == 1
 
-    def test_nested_nots_in_statements(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_nested_nots_in_statements(self, graph_type):
+        host = graph_type()
         host.add_node("Piano", votes=42, percussion="yup", strings="yup")
         host.add_node("Guitar", votes=16, percussion="nah", strings="yup")
         host.add_node("Drum", votes=12, percussion="yup", strings="nah")
@@ -1520,8 +1643,9 @@ class TestNot:
 
 
 class TestPath:
-    def test_path(self):
-        host = nx.DiGraph()
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_path(self, graph_type):
+        host = graph_type()
         host.add_node("x", name="x")
         host.add_node("y", name="y")
         host.add_node("z", name="z")
