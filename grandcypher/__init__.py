@@ -16,7 +16,7 @@ import networkx as nx
 
 import grandiso
 
-from lark import Lark, Transformer, v_args, Token
+from lark import Lark, Transformer, v_args, Token, Tree
 
 
 _OPERATORS = {
@@ -107,8 +107,8 @@ node_match          : "(" (CNAME)? (json_dict)? ")"
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" type_list "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" type_list "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
@@ -118,6 +118,7 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
 
+type_list           : TYPE ( "|" TYPE )*
 
 LEFT_ANGLE          : "<"
 RIGHT_ANGLE         : ">"
@@ -228,10 +229,14 @@ def _is_edge_attr_match(
     motif_edges = _aggregate_edge_labels(motif_edges)
     host_edges = _aggregate_edge_labels(host_edges)
 
+    motif_types = motif_edges.get('__labels__', set())
+    host_types = host_edges.get('__labels__', set())
+
+    if motif_types and not motif_types.intersection(host_types):
+        return False
+
     for attr, val in motif_edges.items():
         if attr == "__labels__":
-            if val and val - host_edges.get("__labels__", set()):
-                return False
             continue
         if host_edges.get(attr) != val:
             return False
@@ -775,10 +780,21 @@ class _GrandCypherTransformer(Transformer):
             return ".".join(entity_id)
         return entity_id.value
 
-    def edge_match(self, edge_name):
-        direction = cname = min_hop = max_hop = edge_type = None
+    def edge_match(self, edge_tokens):
+        def flatten_tokens(edge_tokens):
+            flat_tokens = []
+            for token in edge_tokens:
+                if isinstance(token, Tree):
+                    flat_tokens.extend(flatten_tokens(token.children))  # Recursively flatten the tree
+                else:
+                    flat_tokens.append(token)
+            return flat_tokens
 
-        for token in edge_name:
+        direction = cname = min_hop = max_hop = None
+        edge_types = []
+        edge_tokens = flatten_tokens(edge_tokens)
+
+        for token in edge_tokens:
             if token.type == "MIN_HOP":
                 min_hop = int(token.value)
             elif token.type == "MAX_HOP":
@@ -790,15 +806,19 @@ class _GrandCypherTransformer(Transformer):
             elif token.type == "RIGHT_ANGLE":
                 direction = "r"
             elif token.type == "TYPE":
-                edge_type = token.value
+                edge_types.append(token.value)
             else:
                 cname = token
 
         direction = direction if direction is not None else "b"
         if (min_hop is not None or max_hop is not None) and (direction == "b"):
-            raise TypeError("not support edge hopping for bidirectional edge")
+            raise TypeError("Bidirectional edge does not support edge hopping")
 
-        return (cname, edge_type, direction, min_hop, max_hop)
+        # Handle the case where no edge types are specified, defaulting to a generic type if needed
+        if edge_types == []:
+            edge_types = None
+
+        return (cname, edge_types, direction, min_hop, max_hop)
 
     def node_match(self, node_name):
         cname = node_type = json_data = None
@@ -845,7 +865,7 @@ class _GrandCypherTransformer(Transformer):
             if maxh > self._max_hop:
                 raise ValueError(f"max hop is caped at 100, found {maxh}!")
             if t:
-                t = set([t])
+                t = set([t] if type(t) is str else t)
             self._motif.add_edges_from(
                 edges, __min_hop__=minh, __max_hop__=maxh, __is_hop__=ish, __labels__=t
             )
