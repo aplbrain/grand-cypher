@@ -1661,3 +1661,94 @@ class TestPath:
 
         res = GrandCypher(host).run(qry)
         assert len(res["P"][0]) == 5
+
+
+class TestMatchWithOrOperatorInRelationships:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_single_or_operator(self, graph_type):
+        host = graph_type()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Carol")
+        host.add_edge("a", "b", __labels__={"LOVES"})
+        host.add_edge("b", "c", __labels__={"WORKS_WITH"})
+
+        qry = """
+        MATCH (n1)-[r:LOVES|WORKS_WITH]->(n2)
+        RETURN n1.name, n2.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n1.name"] == ["Alice", "Bob"]
+        assert res["n2.name"] == ["Bob", "Carol"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_multiple_or_operators(self, graph_type):
+        host = graph_type()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Carol")
+        host.add_node("d", name="Derek")
+        host.add_edge("a", "b", __labels__={"LOVES"})
+        host.add_edge("a", "c", __labels__={"KNOWS"})
+        host.add_edge("b", "c", __labels__={"LIVES_NEAR"})
+        host.add_edge("b", "d", __labels__={"WORKS_WITH"})
+
+        qry = """
+        MATCH (n1)-[r:LOVES|KNOWS|LIVES_NEAR]->(n2)
+        RETURN n1.name, n2.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n1.name"] == ["Alice", "Alice", "Bob"]
+        assert res["n2.name"] == ["Bob", "Carol", "Carol"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_or_operator_and_other_conditions(self, graph_type):
+        host = graph_type()
+        host.add_node("a", name="Alice", age=30)
+        host.add_node("b", name="Bob", age=25)
+        host.add_node("c", name="Carol", age=40)
+        host.add_edge("a", "b", __labels__={"LOVES"})
+        host.add_edge("a", "c", __labels__={"KNOWS"})
+        host.add_edge("b", "c", __labels__={"WORKS_WITH"})
+
+        qry = """
+        MATCH (n1)-[r:LOVES|KNOWS]->(n2)
+        WHERE n1.age > 28 AND n2.age > 35
+        RETURN n1.name, n2.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n1.name"] == ["Alice"]
+        assert res["n2.name"] == ["Carol"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_no_results_when_no_matching_edges(self, graph_type):
+        host = graph_type()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_edge("a", "b", __labels__={"WORKS_WITH"})
+
+        qry = """
+        MATCH (n1)-[r:IN_CITY|HAS_ROUTE]->(n2)
+        RETURN n1.name, n2.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["n1.name"]) == 0  # No results because no edges match
+
+    def test_multigraph_match_with_single_or_operator(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Carol")
+        host.add_node("d", name="Derek")
+        host.add_edge("a", "b", __labels__={"LOVES"})
+        host.add_edge("b", "c", __labels__={"WORKS_WITH"})
+        host.add_edge("b", "c", __labels__={"DISLIKES"})
+        host.add_edge("b", "d", __labels__={"DISLIKES"})
+
+        qry = """
+        MATCH (n1)-[r:IS_SUING|DISLIKES]->(n2)
+        RETURN n1.name, n2.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n1.name"] == ["Bob", "Bob"]
+        assert res["n2.name"] == ["Carol", "Derek"]
