@@ -289,15 +289,6 @@ def _get_entity_from_host(
         if not edge_data:
             return None  # print(f"Nothing found for {entity_name} {entity_attribute}")
         
-        # import ipdb;ipdb.set_trace()
-        # result = {}
-        # if entity_attribute:
-        #     for rel_type, attrs in edge_data.items():
-        #         result[str(rel_type) + '.' + entity_attribute] = attrs.get(entity_attribute, None)
-        # else:
-        #     for rel_type, attrs in edge_data.items():
-        #         result[str(rel_type)] = attrs
-        # return result
         if entity_attribute:
             # looking for edge attribute:
             if isinstance(host, nx.MultiDiGraph):
@@ -556,29 +547,6 @@ class _GrandCypherTransformer(Transformer):
         skip = int(skip[-1])
         self._skip = skip
 
-    def extract_data(self, entity_name, results):
-        attribute = None
-        if '.' in entity_name:
-                requested_attribute = entity_name
-                entity_name, attribute = entity_name.split('.')
-        
-        if attribute:
-            # Flatten values from a multidigraph and collect all relevant attributes
-            attr_keys = {k: [] for item in results[requested_attribute] for k in item.keys()}
-            import ipdb;ipdb.set_trace()
-            attributes = [
-                item.get(attribute, {}).values() for item in results[requested_attribute]
-            ]
-            import ipdb;ipdb.set_trace()
-            data = [
-                value for sublist in [
-                    self._target_graph.nodes[node].get(attribute, {}).values() for node in self._target_graph.nodes()
-                    ] for value in sublist
-            ]
-        else:
-            # return the list of nodes/edges
-            data = list(results.get(entity_name, []))
-        return data
 
     def aggregate(self, func, results, entity, group_keys):
         # Collect data based on group keys
@@ -615,6 +583,7 @@ class _GrandCypherTransformer(Transformer):
                 min_data = {label: min(data) for label, data in collated_data.items()}
                 aggregate_results[group] = min_data
 
+        aggregate_results = [v for v in aggregate_results.values()]
         return aggregate_results
 
     def returns(self, ignore_limit=False):
@@ -630,7 +599,6 @@ class _GrandCypherTransformer(Transformer):
             for func, entity in self._aggregate_functions:
                 aggregated_data = self.aggregate(func, results, entity, group_keys)
                 aggregated_results[f"{func}({entity})"] = aggregated_data
-            import ipdb; ipdb.set_trace()
             results.update(aggregated_results)
         if self._order_by:
             results = self._apply_order_by(results)
