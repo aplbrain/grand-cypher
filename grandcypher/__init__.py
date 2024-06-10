@@ -86,8 +86,8 @@ return_clause       : "return"i distinct_return? return_item ("," return_item)*
 return_item         : entity_id | aggregation_function | entity_id "." attribute_id
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
-AGGREGATE_FUNC : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
-attribute_id    : CNAME
+AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
+attribute_id         : CNAME
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -557,14 +557,26 @@ class _GrandCypherTransformer(Transformer):
                 grouped_data[group_tuple] = []
             grouped_data[group_tuple].append(results[entity][i])
 
+        def _collate_data(data, unique_labels, func):
+            # for ["COUNT", "SUM", "AVG"], we treat None as 0
+            if func in ["COUNT", "SUM", "AVG"]:
+                collated_data = {
+                        label: [(v or 0) for rel in data for k, v in rel.items() if k[1] == label] for label in unique_labels
+                }
+            # for ["MAX", "MIN"], we treat None as non-existent
+            elif func in ["MAX", "MIN"]:
+                collated_data = {
+                        label: [v for rel in data for k, v in rel.items() if (k[1] == label and v is not None)] for label in unique_labels
+                }
+
+            return collated_data
+
         # Apply aggregation function
         aggregate_results = {}
         for group, data in grouped_data.items():
             # data => [{(0, 'paid'): 70, (1, 'paid'): 90}]
-            unqiue_labels = set([k[1] for rel in data for k in rel.keys()])
-            collated_data = {
-                    label: [(v or 0) for rel in data for k, v in rel.items() if k[1] == label] for label in unqiue_labels
-            }
+            unique_labels = set([k[1] for rel in data for k in rel.keys()])
+            collated_data = _collate_data(data, unique_labels, func)
             if func == "COUNT":
                 count_data = {label: len(data) for label, data in collated_data.items()}
                 aggregate_results[group] = count_data
