@@ -909,8 +909,8 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ["Alice"]
         assert res["b.name"] == ["Bob"]
-        assert res["r.years"] == [{0: 3, 1: 5, 2: None}]   # should return None when attr is missing
-
+        assert res["r.years"] == [{(0, 'colleague'): 3, (1, 'friend'): 5, (2, 'enemy'): None}]   # should return None when attr is missing
+    
     def test_edge_directionality(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -926,9 +926,8 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ["Alice", "Bob"]
         assert res["b.name"] == ["Bob", "Alice"]
-        assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}, 1: {'mentor'}}]
-        assert res["r.years"] == [{0: 1}, {0: 2, 1: 4}]
-
+        assert res["r.__labels__"] == [{(0, 'friend'): {'friend'}}, {(0, 'colleague'): {'colleague'}, (1, 'mentor'): {'mentor'}}]
+        assert res["r.years"] == [{(0, 'friend'): 1}, {(0, 'colleague'): 2, (1, 'mentor'): 4}]
 
     def test_query_with_missing_edge_attribute(self):
         host = nx.MultiDiGraph()
@@ -947,7 +946,7 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ["Alice", "Bob"]
         assert res["b.name"] == ["Charlie", "Charlie"]
-        assert res["r.duration"] == [{0: None}, {0: 10, 1: None}]   # should return None when attr is missing
+        assert res["r.duration"] == [{(0, 'colleague'): None}, {(0, 'colleague'): 10, (1, 'mentor'): None}]
 
         qry = """
         MATCH (a)-[r:colleague]->(b)
@@ -956,7 +955,7 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ["Alice", "Bob"]
         assert res["b.name"] == ["Charlie", "Charlie"]
-        assert res["r.years"] == [{0: 10}, {0: None, 1: 2}]
+        assert res["r.years"] == [{(0, 'colleague'): 10}, {(0, 'colleague'): None, (1, 'mentor'): 2}]
 
         qry = """
         MATCH (a)-[r]->(b)
@@ -965,8 +964,8 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ['Alice', 'Alice', 'Bob']
         assert res["b.name"] == ['Bob', 'Charlie', 'Charlie']
-        assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}}, {0: {'colleague'}, 1: {'mentor'}}]
-        assert res["r.duration"] == [{0: None}, {0: None}, {0: 10, 1: None}]
+        assert res["r.__labels__"] == [{(0, 'friend'): {'friend'}}, {(0, 'colleague'): {'colleague'}}, {(0, 'colleague'): {'colleague'}, (1, 'mentor'): {'mentor'}}]
+        assert res["r.duration"] == [{(0, 'friend'): None}, {(0, 'colleague'): None}, {(0, 'colleague'): 10, (1, 'mentor'): None}]
 
     def test_multigraph_single_edge_where(self):
         host = nx.MultiDiGraph()
@@ -986,9 +985,9 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ["Alice", "Bob"]
         assert res["b.name"] == ["Bob", "Alice"]
-        assert res["r.__labels__"] == [{0: {'friend'}}, {0: {'colleague'}, 1: {'mentor'}}]
-        assert res["r.years"] == [{0: 1}, {0: 2, 1: 4}]
-        assert res["r.friendly"] == [{0: 'very'}, {0: None, 1: None}]
+        assert res["r.__labels__"] == [{(0, 'friend'): {'friend'}}, {(0, 'colleague'): {'colleague'}, (1, 'mentor'): {'mentor'}}]
+        assert res["r.years"] == [{(0, 'friend'): 1}, {(0, 'colleague'): 2, (1, 'mentor'): 4}]
+        assert res["r.friendly"] == [{(0, 'friend'): 'very'}, {(0, 'colleague'): None, (1, 'mentor'): None}]
 
     def test_multigraph_where_node_attribute(self):
         host = nx.MultiDiGraph()
@@ -1008,9 +1007,136 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["a.name"] == ["Alice"]
         assert res["b.name"] == ["Bob"]
-        assert res["r.__labels__"] == [{0: {'friend'}}]
-        assert res["r.years"] == [{0: 1}]
-        assert res["r.friendly"] == [{0: 'very'}]
+        assert res["r.__labels__"] == [{(0, 'friend'): {'friend'}}]
+        assert res["r.years"] == [{(0, 'friend'): 1}]
+        assert res["r.friendly"] == [{(0, 'friend'): 'very'}]
+
+    def test_multigraph_multiple_same_edge_labels(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12, date="12th June")
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"friends"}, years=9)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, r.amount
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Bob"]
+        assert res["m.name"] == ["Bob", "Alice"]
+        # the second "paid" edge between Bob -> Alice has no "amount" attribute, so it should be None
+        assert res["r.amount"] == [{(0, 'paid'): 12, (1, 'friends'): None, (2, 'paid'): 40}, {(0, 'paid'): 6, (1, 'paid'): None}]
+
+    def test_multigraph_aggregation_function_sum(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12, date="12th June")
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"friends"}, years=9)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, SUM(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['SUM(r.amount)'] ==  [{'friends': 0, 'paid': 52}, {'paid': 6}]
+
+    def test_multigraph_aggregation_function_avg(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12, date="12th June")
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6, message="Thanks")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, AVG(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["AVG(r.amount)"] == [{'paid': 26}, {'paid': 6}]
+
+    def test_multigraph_aggregation_function_min(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+        host.add_edge("a", "b", __labels__={"paid"}, value=4)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, MIN(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["MIN(r.amount)"] == [{'paid': 12}, {'paid': 6}]
+
+    def test_multigraph_aggregation_function_max(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+        host.add_edge("a", "c", __labels__={"owes"}, amount=39)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, MAX(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["MAX(r.amount)"] == [{'paid': 40}, {'paid': 6}]
+
+        qry = """
+        MATCH (n)-[r:owes]->(m)
+        RETURN n.name, m.name, MAX(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["MAX(r.amount)"] == [{'owes': 39}]
+
+    def test_multigraph_aggregation_function_count(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+        host.add_edge("a", "c", __labels__={"owes"}, amount=39)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, COUNT(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["COUNT(r.amount)"] == [{'paid': 2}, {'paid': 1}]
+
+    def test_multigraph_multiple_aggregation_functions(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+        host.add_edge("a", "c", __labels__={"owes"}, amount=39)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, COUNT(r.amount), SUM(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["COUNT(r.amount)"] == [{'paid': 2}, {'paid': 1}]
+        assert res["SUM(r.amount)"] == [{'paid': 52}, {'paid': 6}]
 
 
 class TestVariableLengthRelationship:
