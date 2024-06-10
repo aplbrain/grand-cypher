@@ -491,11 +491,8 @@ class _GrandCypherTransformer(Transformer):
                     for r in ret:
                         r_attr = {}
                         for i, v in r.items():
-                            # r_attr[list(v.get('__labels__'))[0]] = v.get(entity_attribute, None)
-                            # [{'paid': 90}, {'paid': 650, 'friend': None}]
                             r_attr[(i, list(v.get('__labels__'))[0])] = v.get(entity_attribute, None)
-                            # [{0: 70, 1: 90}, {0: 400, 1: None, 2: 650}]
-                            # [{(0, 'paid'): 70, (1, 'paid'): 90}, {(0, 'paid'): 400, (1, 'friend'): None, (2, 'paid'): 650}]
+                            # eg, [{(0, 'paid'): 70, (1, 'paid'): 90}, {(0, 'paid'): 400, (1, 'friend'): None, (2, 'paid'): 650}]
                         ret_with_attr.append(r_attr)
                         
                     ret = ret_with_attr
