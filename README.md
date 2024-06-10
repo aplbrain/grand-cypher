@@ -27,6 +27,8 @@ RETURN A.club, B.club
 """)
 ```
 
+See [examples.md](examples.md) for more!
+
 ### Example Usage with SQL
 
 Create your own "Sqlite for Neo4j"! This example uses [grand-graph](https://github.com/aplbrain/grand) to run queries in SQL:
@@ -81,6 +83,7 @@ RETURN
 | Graph mutations (e.g. `DELETE`, `SET`,...) | 🛣                    |     |
 | `DISTINCT`                                 | ✅ Thanks @jackboyla! |     |
 | `ORDER BY`                                 | ✅ Thanks @jackboyla! |     |
+| Aggregation functions (`COUNT`, `SUM`, `MIN`, `MAX`, `AVG`)                                 | ✅ Thanks @jackboyla! |     |
 
 |                |                |                  |
 | -------------- | -------------- | ---------------- |
