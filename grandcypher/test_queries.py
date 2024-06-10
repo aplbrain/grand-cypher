@@ -1120,6 +1120,24 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["COUNT(r.amount)"] == [{'paid': 2}, {'paid': 1}]
 
+    def test_multigraph_multiple_aggregation_functions(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+        host.add_edge("a", "c", __labels__={"owes"}, amount=39)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, m.name, COUNT(r.amount), SUM(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["COUNT(r.amount)"] == [{'paid': 2}, {'paid': 1}]
+        assert res["SUM(r.amount)"] == [{'paid': 52}, {'paid': 6}]
+
 
 class TestVariableLengthRelationship:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
