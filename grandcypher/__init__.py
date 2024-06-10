@@ -598,7 +598,9 @@ class _GrandCypherTransformer(Transformer):
             aggregated_results = {}
             for func, entity in self._aggregate_functions:
                 aggregated_data = self.aggregate(func, results, entity, group_keys)
-                aggregated_results[f"{func}({entity})"] = aggregated_data
+                func_key = f"{func}({entity})"
+                aggregated_results[func_key] = aggregated_data
+                self._return_requests.append(func_key)
             results.update(aggregated_results)
         if self._order_by:
             results = self._apply_order_by(results)
