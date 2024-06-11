@@ -161,7 +161,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -235,8 +235,8 @@ def _is_edge_attr_match(
     motif_edges = _aggregate_edge_labels(motif_edges)
     host_edges = _aggregate_edge_labels(host_edges)
 
-    motif_types = motif_edges.get('__labels__', set())
-    host_types = host_edges.get('__labels__', set())
+    motif_types = motif_edges.get("__labels__", set())
+    host_types = host_edges.get("__labels__", set())
 
     if motif_types and not motif_types.intersection(host_types):
         return False
@@ -246,7 +246,7 @@ def _is_edge_attr_match(
             continue
         if host_edges.get(attr) != val:
             return False
-    
+
     return True
 
 
@@ -271,6 +271,7 @@ def _aggregate_edge_labels(edges: Dict) -> Dict:
             aggregated[edge_id] = attrs
     return aggregated
 
+
 def _get_entity_from_host(
     host: Union[nx.DiGraph, nx.MultiDiGraph], entity_name, entity_attribute=None
 ):
@@ -288,7 +289,7 @@ def _get_entity_from_host(
         edge_data = host.get_edge_data(*entity_name)
         if not edge_data:
             return None  # print(f"Nothing found for {entity_name} {entity_attribute}")
-        
+
         if entity_attribute:
             # looking for edge attribute:
             if isinstance(host, nx.MultiDiGraph):
@@ -491,14 +492,15 @@ class _GrandCypherTransformer(Transformer):
                     for r in ret:
                         r_attr = {}
                         for i, v in r.items():
-                            r_attr[(i, list(v.get('__labels__'))[0])] = v.get(entity_attribute, None)
+                            r_attr[(i, list(v.get("__labels__"))[0])] = v.get(
+                                entity_attribute, None
+                            )
                             # eg, [{(0, 'paid'): 70, (1, 'paid'): 90}, {(0, 'paid'): 400, (1, 'friend'): None, (2, 'paid'): 650}]
                         ret_with_attr.append(r_attr)
-                        
+
                     ret = ret_with_attr
 
             result[data_path] = list(ret)[offset_limit]
-
 
         return result
 
@@ -518,7 +520,6 @@ class _GrandCypherTransformer(Transformer):
                     if not isinstance(item, str):
                         item = str(item.value)
                     self._return_requests.append(item)
-
 
     def order_clause(self, order_clause):
         self._order_by = []
@@ -544,7 +545,6 @@ class _GrandCypherTransformer(Transformer):
         skip = int(skip[-1])
         self._skip = skip
 
-
     def aggregate(self, func, results, entity, group_keys):
         # Collect data based on group keys
         grouped_data = {}
@@ -558,12 +558,24 @@ class _GrandCypherTransformer(Transformer):
             # for ["COUNT", "SUM", "AVG"], we treat None as 0
             if func in ["COUNT", "SUM", "AVG"]:
                 collated_data = {
-                        label: [(v or 0) for rel in data for k, v in rel.items() if k[1] == label] for label in unique_labels
+                    label: [
+                        (v or 0)
+                        for rel in data
+                        for k, v in rel.items()
+                        if k[1] == label
+                    ]
+                    for label in unique_labels
                 }
             # for ["MAX", "MIN"], we treat None as non-existent
             elif func in ["MAX", "MIN"]:
                 collated_data = {
-                        label: [v for rel in data for k, v in rel.items() if (k[1] == label and v is not None)] for label in unique_labels
+                    label: [
+                        v
+                        for rel in data
+                        for k, v in rel.items()
+                        if (k[1] == label and v is not None)
+                    ]
+                    for label in unique_labels
                 }
 
             return collated_data
@@ -583,7 +595,14 @@ class _GrandCypherTransformer(Transformer):
             elif func == "AVG":
                 sum_data = {label: sum(data) for label, data in collated_data.items()}
                 count_data = {label: len(data) for label, data in collated_data.items()}
-                avg_data = {label: sum_data[label] / count_data[label] if count_data[label] > 0 else 0 for label in sum_data}
+                avg_data = {
+                    label: (
+                        sum_data[label] / count_data[label]
+                        if count_data[label] > 0
+                        else 0
+                    )
+                    for label in sum_data
+                }
                 aggregate_results[group] = avg_data
             elif func == "MAX":
                 max_data = {label: max(data) for label, data in collated_data.items()}
@@ -602,7 +621,11 @@ class _GrandCypherTransformer(Transformer):
             offset_limit=slice(0, None),
         )
         if len(self._aggregate_functions) > 0:
-            group_keys = [key for key in results.keys() if not any(key.endswith(func[1]) for func in self._aggregate_functions)]
+            group_keys = [
+                key
+                for key in results.keys()
+                if not any(key.endswith(func[1]) for func in self._aggregate_functions)
+            ]
 
             aggregated_results = {}
             for func, entity in self._aggregate_functions:
@@ -865,7 +888,9 @@ class _GrandCypherTransformer(Transformer):
             flat_tokens = []
             for token in edge_tokens:
                 if isinstance(token, Tree):
-                    flat_tokens.extend(flatten_tokens(token.children))  # Recursively flatten the tree
+                    flat_tokens.extend(
+                        flatten_tokens(token.children)
+                    )  # Recursively flatten the tree
                 else:
                     flat_tokens.append(token)
             return flat_tokens

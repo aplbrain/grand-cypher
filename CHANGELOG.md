@@ -1,5 +1,18 @@
 # CHANGELOG
 
+### **0.9.0** (June 11 2024)
+
+> Support for aggregate functions like `COUNT`, `SUM`, `MIN`, `MAX`, and `AVG`.
+
+#### Features
+
+-   Support for aggregate functions like `COUNT`, `SUM`, `MIN`, `MAX`, and `AVG` (#45, thanks @jackboyla!)
+-   Logical `OR` support in relationship matches (#44, thanks @jackboyla!)
+
+#### Testing
+
+-   Combine tests for digraphs and multidigraphs (#43, thanks @jackboyla!)
+
 ### **0.8.0** (May 14 2024)
 
 > Support for MultiDiGraphs.
