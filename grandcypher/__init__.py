@@ -376,7 +376,7 @@ def _data_path_to_entity_name_attribute(data_path):
 
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph, limit=None):
-        self._target_graph = target_graph
+        self._target_graph = nx.MultiDiGraph(target_graph) # target_graph
         self._paths = []
         self._where_condition: CONDITION = None
         self._motif = nx.MultiDiGraph()
@@ -491,12 +491,15 @@ class _GrandCypherTransformer(Transformer):
                     ret_with_attr = []
                     for r in ret:
                         r_attr = {}
-                        for i, v in r.items():
-                            r_attr[(i, list(v.get("__labels__"))[0])] = v.get(
-                                entity_attribute, None
-                            )
-                            # eg, [{(0, 'paid'): 70, (1, 'paid'): 90}, {(0, 'paid'): 400, (1, 'friend'): None, (2, 'paid'): 650}]
-                        ret_with_attr.append(r_attr)
+                        if isinstance(r, dict):
+                            r = [r]
+                        for el in r:
+                            for i, v in el.items():
+                                r_attr[(i, list(v.get("__labels__", [i]))[0])] = v.get(
+                                    entity_attribute, None
+                                )
+                                # eg, [{(0, 'paid'): 70, (1, 'paid'): 90}, {(0, 'paid'): 400, (1, 'friend'): None, (2, 'paid'): 650}]
+                            ret_with_attr.append(r_attr)
 
                     ret = ret_with_attr
 
@@ -665,11 +668,31 @@ class _GrandCypherTransformer(Transformer):
                 for sort_list, direction in reversed(
                     sort_lists
                 ):  # reverse to ensure the first sort key is primary
-                    indices = sorted(
-                        indices,
-                        key=lambda i: sort_list[i],
-                        reverse=(direction == "DESC"),
-                    )
+                    
+                    if all(isinstance(item, dict) for item in sort_list):
+                        # (for edge attributes) If all items in sort_list are dictionaries
+                        # example: ([{(0, 'paid'): 9, (1, 'paid'): 40}, {(0, 'paid'): 14}], 'DESC')
+
+                        # sort within each edge first
+                        for i, sublist in enumerate(sort_list):
+                            sort_list[i] = sorted(
+                                sublist.items(),
+                                key=lambda x: x[1] or 0,  # 0 if `None`
+                                reverse=(direction == "DESC"),
+                            )
+                        # then sort the indices based on the sorted sublists
+                        indices = sorted(
+                            indices,
+                            key=lambda i: sort_list[i][0][1] or 0,  # 0 if `None`
+                            reverse=(direction == "DESC"),
+                        )
+                    else:
+                        # (for node attributes) single values
+                        indices = sorted(
+                            indices,
+                            key=lambda i: sort_list[i],
+                            reverse=(direction == "DESC"),
+                        )
 
                 # Reorder all lists in results using sorted indices
                 for key in results:
