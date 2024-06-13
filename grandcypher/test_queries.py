@@ -769,6 +769,60 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
+    def test_order_by_edge_attribute1(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("a", "c", __labels__={"paid"}, value=4)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, r.value, m.name
+        ORDER BY r.value ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Alice', 'Alice', 'Bob']
+        assert res['m.name'] == ['Carol', 'Bob', 'Alice']
+        assert res['r.value'] == [[((0, 'paid'), 4)], [((0, 'paid'), 9)], [((0, 'paid'), 14)]]
+
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, r.value
+        ORDER BY r.value DESC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Bob', 'Alice', 'Alice']
+        assert res['r.value'] == [[((0, 'paid'), 14)], [((0, 'paid'), 9)], [((0, 'paid'), 4)]]
+
+        
+    def test_order_by_edge_attribute2(self):
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=14) # different attribute name
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("c", "b", __labels__={"paid"}, value=980)
+        host.add_edge("b", "c", __labels__={"paid"}, value=11)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, r.value, m.name
+        ORDER BY r.value ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Bob', 'Alice', 'Bob', 'Carol']
+        assert res['r.value'] == [
+            [((0, 'paid'), None)], # None for the different attribute edge
+            [((0, 'paid'), 9)],    # within edges, the attributes are ordered
+            [((0, 'paid'), 11)], 
+            [((0, 'paid'), 980)]
+        ]
+        assert res['m.name'] == ['Alice', 'Bob', 'Carol', 'Bob']
+
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_multiple_fields(self, graph_type):
         host = graph_type()
@@ -1031,6 +1085,62 @@ class TestMultigraphRelations:
         # the second "paid" edge between Bob -> Alice has no "amount" attribute, so it should be None
         assert res["r.amount"] == [{(0, 'paid'): 12, (1, 'friends'): None, (2, 'paid'): 40}, {(0, 'paid'): 6, (1, 'paid'): None}]
 
+    def test_order_by_edge_attribute1(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("a", "b", __labels__={"paid"}, value=40)
+
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, r.value
+        ORDER BY r.value ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Alice', 'Bob']
+        assert res['r.value'] == [[((0, 'paid'), 9), ((1, 'paid'), 40)], [((0, 'paid'), 14)]]
+
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, r.value
+        ORDER BY r.value DESC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Alice', 'Bob']
+        assert res['r.value'] == [[((1, 'paid'), 40), ((0, 'paid'), 9)], [((0, 'paid'), 14)]]
+
+    def test_order_by_edge_attribute2(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=14) # different attribute name
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("c", "b", __labels__={"paid"}, value=980)
+        host.add_edge("c", "b", __labels__={"paid"}, value=4)
+        host.add_edge("b", "c", __labels__={"paid"}, value=11)
+        host.add_edge("a", "b", __labels__={"paid"}, value=40)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)  # duplicate edge
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)   # duplicate edge
+        host.add_edge("a", "b", __labels__={"paid"}, value=40)  # duplicate edge
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, r.value, m.name
+        ORDER BY r.value ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['r.value'] == [
+            [((0, 'paid'), None), ((1, 'paid'), 14)], # None for the different attribute edge
+            [((1, 'paid'), 4), ((0, 'paid'), 980)],   # within edges, the attributes are ordered
+            [((0, 'paid'), 9), ((2, 'paid'), 9), ((1, 'paid'), 40), ((3, 'paid'), 40)], 
+            [((0, 'paid'), 11)]
+        ]
+        assert res['m.name'] == ['Alice', 'Bob', 'Bob', 'Carol']
+
     def test_multigraph_aggregation_function_sum(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -1171,11 +1281,11 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["y", "z", "x"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
-        if graph_type is nx.DiGraph:
-            assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
-        elif graph_type is nx.MultiDiGraph:
-            # MultiDiGraphs return a list of dictionaries to accommodate multiple edges between nodes
-            assert res["r"] == [[{0: {'bar': '1'}}], [{0: {'bar': '2'}}], [{0: {'bar': '3'}}]]
+        # if graph_type is nx.DiGraph:
+        #     assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
+        # elif graph_type is nx.MultiDiGraph:
+        #     # MultiDiGraphs return a list of dictionaries to accommodate multiple edges between nodes
+        assert res["r"] == [[{0: {'bar': '1'}}], [{0: {'bar': '2'}}], [{0: {'bar': '3'}}]]
 
         qry = """
         MATCH (A)-[r*2]->(B)
@@ -1187,18 +1297,20 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
-        if graph_type is nx.DiGraph:
-            assert res["r"] == [
-                [{"bar": "1"}, {"bar": "2"}],
-                [{"bar": "2"}, {"bar": "3"}],
-                [{"bar": "3"}, {"bar": "1"}],
-            ]
-        elif graph_type is nx.MultiGraph:
-            assert res["r"] == [
-                [{0: {'bar': '1'}}, {1: {'bar': '2'}}],
-                [{0: {'bar': '2'}}, {1: {'bar': '3'}}],
-                [{0: {'bar': '3'}}, {1: {'bar': '1'}}],
-            ]
+        # if graph_type is nx.DiGraph:
+        #     assert res["r"] == [
+        #         [{"bar": "1"}, {"bar": "2"}],
+        #         [{"bar": "2"}, {"bar": "3"}],
+        #         [{"bar": "3"}, {"bar": "1"}],
+        #     ]
+        # elif graph_type is nx.MultiDiGraph:
+        assert res["r"] == [
+            [{0: {'bar': '1'}}, {0: {'bar': '2'}}], 
+            [{0: {'bar': '2'}}, {0: {'bar': '3'}}], 
+            [{0: {'bar': '3'}}, {0: {'bar': '1'}}]
+        ]
+        # else:
+        #     raise Exception("Invalid graph type")
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_complex_variable_length_relationship(self, graph_type):
@@ -1220,28 +1332,15 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
-        if graph_type is nx.DiGraph:
-            assert res["r"] == [
-                [None],
-                [None],
-                [None],
-                [{"bar": "1"}],
-                [{"bar": "2"}],
-                [{"bar": "3"}],
-                [{"bar": "1"}, {"bar": "2"}],
-                [{"bar": "2"}, {"bar": "3"}],
-                [{"bar": "3"}, {"bar": "1"}],
-            ]
-        elif graph_type is nx.MultiDiGraph:
-            assert res["r"] == [
-                [None], [None], [None], 
-                [{0: {'bar': '1'}}], 
-                [{0: {'bar': '2'}}], 
-                [{0: {'bar': '3'}}], 
-                [{0: {'bar': '1'}}, {0: {'bar': '2'}}], 
-                [{0: {'bar': '2'}}, {0: {'bar': '3'}}], 
-                [{0: {'bar': '3'}}, {0: {'bar': '1'}}]
-            ]
+        assert res["r"] == [
+            [None], [None], [None], 
+            [{0: {'bar': '1'}}], 
+            [{0: {'bar': '2'}}], 
+            [{0: {'bar': '3'}}], 
+            [{0: {'bar': '1'}}, {0: {'bar': '2'}}], 
+            [{0: {'bar': '2'}}, {0: {'bar': '3'}}], 
+            [{0: {'bar': '3'}}, {0: {'bar': '1'}}]
+        ]
 
 
 class TestType:
@@ -1347,30 +1446,17 @@ class TestType:
         assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
         assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
-        if graph_type is nx.DiGraph:
-            assert res["r"] == [
-                [None],
-                [None],
-                [None],
-                [{"__labels__": {"Edge", "XY"}}],
-                [{"__labels__": {"Edge", "YZ"}}],
-                [{"__labels__": {"Edge", "ZX"}}],
-                [{"__labels__": {"Edge", "XY"}}, {"__labels__": {"Edge", "YZ"}}],
-                [{"__labels__": {"Edge", "YZ"}}, {"__labels__": {"Edge", "ZX"}}],
-                [{"__labels__": {"Edge", "ZX"}}, {"__labels__": {"Edge", "XY"}}],
-            ]
-        elif graph_type is nx.MultiDiGraph:
-            assert res["r"] == [
-                [None], 
-                [None], 
-                [None], 
-                [{0: {'__labels__': {'Edge', 'XY'}}}], 
-                [{0: {'__labels__': {'Edge', 'YZ'}}}], 
-                [{0: {'__labels__': {'Edge', 'ZX'}}}], 
-                [{0: {'__labels__': {'Edge', 'XY'}}}, {0: {'__labels__': {'Edge', 'YZ'}}}], 
-                [{0: {'__labels__': {'Edge', 'YZ'}}}, {0: {'__labels__': {'Edge', 'ZX'}}}], 
-                [{0: {'__labels__': {'Edge', 'ZX'}}}, {0: {'__labels__': {'Edge', 'XY'}}}]
-            ]
+        assert res["r"] == [
+            [None], 
+            [None], 
+            [None], 
+            [{0: {'__labels__': {'Edge', 'XY'}}}], 
+            [{0: {'__labels__': {'Edge', 'YZ'}}}], 
+            [{0: {'__labels__': {'Edge', 'ZX'}}}], 
+            [{0: {'__labels__': {'Edge', 'XY'}}}, {0: {'__labels__': {'Edge', 'YZ'}}}], 
+            [{0: {'__labels__': {'Edge', 'YZ'}}}, {0: {'__labels__': {'Edge', 'ZX'}}}], 
+            [{0: {'__labels__': {'Edge', 'ZX'}}}, {0: {'__labels__': {'Edge', 'XY'}}}]
+        ]
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_host_no_node_type(self, graph_type):
