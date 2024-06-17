@@ -376,7 +376,7 @@ def _data_path_to_entity_name_attribute(data_path):
 
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph, limit=None):
-        self._target_graph = nx.MultiDiGraph(target_graph) # target_graph
+        self._target_graph = nx.MultiDiGraph(target_graph)
         self._paths = []
         self._where_condition: CONDITION = None
         self._motif = nx.MultiDiGraph()
