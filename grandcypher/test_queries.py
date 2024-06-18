@@ -786,7 +786,7 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res['n.name'] == ['Alice', 'Alice', 'Bob']
         assert res['m.name'] == ['Carol', 'Bob', 'Alice']
-        assert res['r.value'] == [[((0, 'paid'), 4)], [((0, 'paid'), 9)], [((0, 'paid'), 14)]]
+        assert res['r.value'] == [{(0, 'paid'): 4}, {(0, 'paid'): 9}, {(0, 'paid'): 14}]
 
         qry = """
         MATCH (n)-[r]->()
@@ -795,7 +795,7 @@ class TestOrderBy:
         """
         res = GrandCypher(host).run(qry)
         assert res['n.name'] == ['Bob', 'Alice', 'Alice']
-        assert res['r.value'] == [[((0, 'paid'), 14)], [((0, 'paid'), 9)], [((0, 'paid'), 4)]]
+        assert res['r.value'] == [{(0, 'paid'): 14}, {(0, 'paid'): 9}, {(0, 'paid'): 4}]
 
         
     def test_order_by_edge_attribute2(self):
@@ -816,12 +816,76 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res['n.name'] == ['Bob', 'Alice', 'Bob', 'Carol']
         assert res['r.value'] == [
-            [((0, 'paid'), None)], # None for the different attribute edge
-            [((0, 'paid'), 9)],    # within edges, the attributes are ordered
-            [((0, 'paid'), 11)], 
-            [((0, 'paid'), 980)]
+            {(0, 'paid'): None}, # None for the different attribute edge
+            {(0, 'paid'): 9},    # within edges, the attributes are ordered
+            {(0, 'paid'): 11}, 
+            {(0, 'paid'): 980}
         ]
         assert res['m.name'] == ['Alice', 'Bob', 'Carol', 'Bob']
+
+    def test_order_by_aggregation_function(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=96)
+        host.add_edge("a", "b", __labels__={"paid"}, value=40)
+
+        # SUM
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, SUM(r.value)
+        ORDER BY SUM(r.value) ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Bob', 'Alice']
+        assert res['SUM(r.value)'] == [{'paid': 14}, {'paid': 49}]
+
+        # AVG
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, AVG(r.value), r.value
+        ORDER BY AVG(r.value) DESC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Alice', 'Bob']
+        assert res['AVG(r.value)'] == [{'paid': 16.333333333333332}, {'paid': 14.0}]
+        assert res['r.value'] == [{(0, 'paid'): 9, (1, 'paid'): None, (2, 'paid'): 40}, {(0, 'paid'): 14}]
+
+        # MIN, MAX, and COUNT
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, MIN(r.value), MAX(r.value), COUNT(r.value)
+        ORDER BY MAX(r.value) DESC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res['n.name'] == ['Alice', 'Bob']
+        assert res['MIN(r.value)'] == [{'paid': 9}, {'paid': 14}]
+        assert res['MAX(r.value)'] == [{'paid': 40}, {'paid': 14}]
+        assert res['COUNT(r.value)'] == [{'paid': 3}, {'paid': 1}]
+
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_order_by_aggregation_fails_if_not_requested_in_return(self, graph_type):
+        host = graph_type()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=96)
+        host.add_edge("a", "b", __labels__={"paid"}, value=40)
+
+        qry = """
+        MATCH (n)-[r]->()
+        RETURN n.name, r.value
+        ORDER BY SUM(r.value) ASC
+        """
+        with pytest.raises(Exception):
+            GrandCypher(host).run(qry)
+
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_multiple_fields(self, graph_type):
@@ -1101,7 +1165,7 @@ class TestMultigraphRelations:
         """
         res = GrandCypher(host).run(qry)
         assert res['n.name'] == ['Alice', 'Bob']
-        assert res['r.value'] == [[((0, 'paid'), 9), ((1, 'paid'), 40)], [((0, 'paid'), 14)]]
+        assert res['r.value'] == [{(0, 'paid'): 9, (1, 'paid'): 40}, {(0, 'paid'): 14}]
 
         qry = """
         MATCH (n)-[r]->()
@@ -1110,7 +1174,7 @@ class TestMultigraphRelations:
         """
         res = GrandCypher(host).run(qry)
         assert res['n.name'] == ['Alice', 'Bob']
-        assert res['r.value'] == [[((1, 'paid'), 40), ((0, 'paid'), 9)], [((0, 'paid'), 14)]]
+        assert res['r.value'] == [{(1, 'paid'): 40, (0, 'paid'): 9}, {(0, 'paid'): 14}]
 
     def test_order_by_edge_attribute2(self):
         host = nx.MultiDiGraph()
@@ -1134,10 +1198,10 @@ class TestMultigraphRelations:
         """
         res = GrandCypher(host).run(qry)
         assert res['r.value'] == [
-            [((0, 'paid'), None), ((1, 'paid'), 14)], # None for the different attribute edge
-            [((1, 'paid'), 4), ((0, 'paid'), 980)],   # within edges, the attributes are ordered
-            [((0, 'paid'), 9), ((2, 'paid'), 9), ((1, 'paid'), 40), ((3, 'paid'), 40)], 
-            [((0, 'paid'), 11)]
+            {(0, 'paid'): None, (1, 'paid'): 14}, # None for the different attribute edge
+            {(1, 'paid'): 4, (0, 'paid'): 980},   # within edges, the attributes are ordered
+            {(0, 'paid'): 9, (2, 'paid'): 9, (1, 'paid'): 40, (3, 'paid'): 40}, 
+            {(0, 'paid'): 11}
         ]
         assert res['m.name'] == ['Alice', 'Bob', 'Bob', 'Carol']
 
@@ -1249,6 +1313,79 @@ class TestMultigraphRelations:
         assert res["SUM(r.amount)"] == [{'paid': 52}, {'paid': 6}]
 
 
+class TestAlias:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_alias_with_single_variable_length_relationship(self, graph_type):
+        host = graph_type()
+        host.add_node("x", foo=12)
+        host.add_node("y", foo=13)
+        host.add_node("z", foo=16)
+        host.add_edge("x", "y", bar="1")
+        host.add_edge("y", "z", bar="2")
+        host.add_edge("z", "x", bar="3")
+
+        qry = """
+        MATCH (A)-[r*0]->(B)
+        RETURN A AS ayy, B AS bee, r
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["ayy"] == ["x", "y", "z"]
+        assert res["bee"] == ["x", "y", "z"]
+        assert res["r"] == [[None], [None], [None]]
+
+        qry = """
+        MATCH (A)-[r*1]->(B)
+        RETURN A, B, r AS arr
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert len(res) == 3
+        assert res["A"] == ["x", "y", "z"]
+        assert res["B"] == ["y", "z", "x"]
+        assert graph_type in ACCEPTED_GRAPH_TYPES
+        assert res["arr"] == [[{0: {'bar': '1'}}], [{0: {'bar': '2'}}], [{0: {'bar': '3'}}]]
+
+    def test_alias_with_order_by(self):
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Carol", age=20)
+        host.add_edge("b", "a", __labels__={"paid"}, value=14)
+        host.add_edge("a", "b", __labels__={"paid"}, value=9)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=96)
+        host.add_edge("a", "b", __labels__={"paid"}, value=40)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, AVG(r.value) AS average, m.name, r.value
+        ORDER BY average ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ['Bob', 'Alice']
+        assert res["m.name"] == ['Alice', 'Bob']
+        assert res['r.value'] == [
+            {(0, 'paid'): 14}, 
+            {(0, 'paid'): 9, (1, 'paid'): None, (2, 'paid'): 40}
+        ]
+        assert res["average"] == [{'paid': 14.0}, {'paid': 16.333333333333332}]
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, m.name, AVG(r.value) AS total, r.value as myvalue
+        ORDER BY myvalue ASC
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ['Alice', 'Bob']
+        assert res["m.name"] == ['Bob', 'Alice']
+        assert res['total'] == [{'paid': 16.333333333333332}, {'paid': 14.0}]
+        assert res["myvalue"] == [
+            {(1, 'paid'): None, (0, 'paid'): 9, (2, 'paid'): 40}, 
+            {(0, 'paid'): 14}
+        ]
+
+
 class TestVariableLengthRelationship:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_single_variable_length_relationship(self, graph_type):
@@ -1281,10 +1418,6 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["y", "z", "x"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
-        # if graph_type is nx.DiGraph:
-        #     assert res["r"] == [[{"bar": "1"}], [{"bar": "2"}], [{"bar": "3"}]]
-        # elif graph_type is nx.MultiDiGraph:
-        #     # MultiDiGraphs return a list of dictionaries to accommodate multiple edges between nodes
         assert res["r"] == [[{0: {'bar': '1'}}], [{0: {'bar': '2'}}], [{0: {'bar': '3'}}]]
 
         qry = """
@@ -1297,20 +1430,11 @@ class TestVariableLengthRelationship:
         assert res["A"] == ["x", "y", "z"]
         assert res["B"] == ["z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
-        # if graph_type is nx.DiGraph:
-        #     assert res["r"] == [
-        #         [{"bar": "1"}, {"bar": "2"}],
-        #         [{"bar": "2"}, {"bar": "3"}],
-        #         [{"bar": "3"}, {"bar": "1"}],
-        #     ]
-        # elif graph_type is nx.MultiDiGraph:
         assert res["r"] == [
             [{0: {'bar': '1'}}, {0: {'bar': '2'}}], 
             [{0: {'bar': '2'}}, {0: {'bar': '3'}}], 
             [{0: {'bar': '3'}}, {0: {'bar': '1'}}]
         ]
-        # else:
-        #     raise Exception("Invalid graph type")
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_complex_variable_length_relationship(self, graph_type):
