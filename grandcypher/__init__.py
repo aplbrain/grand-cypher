@@ -84,11 +84,11 @@ op                  : "==" -> op_eq
 
 return_clause       : "return"i distinct_return? return_item ("," return_item)*
 return_item         : (entity_id | aggregation_function | entity_id "." attribute_id) ( "AS"i alias )?
+alias               : CNAME
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
-alias                : CNAME
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -314,14 +314,20 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
 def and_(cond_a, cond_b) -> CONDITION:
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        return cond_a(match, host, return_endges) and cond_b(match, host, return_endges)
-
+        condition_a, where_a = cond_a(match, host, return_endges) 
+        condition_b, where_b = cond_b(match, host, return_endges)
+        where_result = [a and b for a, b in zip(where_a, where_b)]
+        return (condition_a and condition_b), where_result
+    
     return inner
 
 
 def or_(cond_a, cond_b):
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        return cond_a(match, host, return_endges) or cond_b(match, host, return_endges)
+        condition_a, where_a = cond_a(match, host, return_endges) 
+        condition_b, where_b = cond_b(match, host, return_endges)
+        where_result = [a or b for a, b in zip(where_a, where_b)]
+        return (condition_a or condition_b), where_result
 
     return inner
 
@@ -339,20 +345,27 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
             host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
         else:
             raise IndexError(f"Entity {host_entity_id} not in graph.")
-        try:
-            if isinstance(host, nx.MultiDiGraph):
-                # if any of the relations between nodes satisfies condition, return True
-                r_vals = _get_entity_from_host(host, *host_entity_id)
-                r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
-                val = any(operator(r_val, value) for r_val in r_vals)
-            else:
-                val = operator(_get_entity_from_host(host, *host_entity_id), value)
 
-        except:
-            val = False
+        if isinstance(host, nx.MultiDiGraph):
+            # if any of the relations between nodes satisfies condition, return True
+            r_vals = _get_entity_from_host(host, *host_entity_id)
+            r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
+            operator_results = []
+            for r_val in r_vals:
+                try:
+                    operator_results.append(operator(r_val, value))
+                except:
+                    operator_results.append(False)
+            val = any(operator_results)
+        else:
+            try:
+                val = operator(_get_entity_from_host(host, *host_entity_id), value)
+            except:
+                val = False
+
         if val != should_be:
-            return False
-        return True
+            return False, operator_results
+        return True, operator_results
 
     return inner
 
@@ -397,6 +410,16 @@ class _GrandCypherTransformer(Transformer):
         self._max_hop = 100
 
     def _lookup(self, data_paths: List[str], offset_limit) -> Dict[str, List]:
+
+        def _filter_edge(edge, where_results):
+            # no where condition -> return edge
+            if where_results == []:
+                return edge
+            else:
+                # exclude edge(s) from multiedge that don't satisfy the where condition
+                edge = {k: v for k, v in edge[0].items() if where_results[k] is True}
+                return [edge]
+            
         if not data_paths:
             return {}
 
@@ -422,7 +445,7 @@ class _GrandCypherTransformer(Transformer):
             if entity_name in motif_nodes:
                 # We are looking for a node mapping in the target graph:
 
-                ret = (mapping[entity_name] for mapping, _ in true_matches)
+                ret = (mapping[0][entity_name] for mapping, _ in true_matches)
                 # by default, just return the node from the host graph
 
                 if entity_attribute:
@@ -436,6 +459,7 @@ class _GrandCypherTransformer(Transformer):
             elif entity_name in self._paths:
                 ret = []
                 for mapping, _ in true_matches:
+                    mapping = mapping[0]
                     path, nodes = [], list(mapping.values())
                     for x, node in enumerate(nodes):
                         # Edge
@@ -454,8 +478,10 @@ class _GrandCypherTransformer(Transformer):
                 # We are looking for an edge mapping in the target graph:
                 is_hop = self._motif.edges[(mapping_u, mapping_v, 0)]["__is_hop__"]
                 ret = (
-                    _get_edge(
-                        self._target_graph, mapping, match_path, mapping_u, mapping_v
+                    _filter_edge(
+                        _get_edge(
+                            self._target_graph, mapping[0], match_path, mapping_u, mapping_v
+                        ), mapping[1]
                     )
                     for mapping, match_path in true_matches
                 )
@@ -479,14 +505,10 @@ class _GrandCypherTransformer(Transformer):
                         filtered_ret = []
                         for r in ret:
 
-                            if any(
-                                [
-                                    i.get("__labels__", None).issubset(
-                                        motif_edge_labels
-                                    )
-                                    for i in r.values()
-                                ]
-                            ):
+                            r = {
+                                k: v for k, v in r.items() if v.get("__labels__", None).intersection(motif_edge_labels)
+                            }
+                            if len(r) > 0:
                                 filtered_ret.append(r)
 
                         ret = filtered_ret
@@ -498,7 +520,7 @@ class _GrandCypherTransformer(Transformer):
                         if isinstance(r, dict):
                             r = [r]
                         for el in r:
-                            for i, v in el.items():
+                            for i, v in enumerate(el.values()):
                                 r_attr[(i, list(v.get("__labels__", [i]))[0])] = v.get(
                                     entity_attribute, None
                                 )
@@ -837,10 +859,14 @@ class _GrandCypherTransformer(Transformer):
                         match[b] = match[a]
                     else:  # For/else loop
                         # Check if match matches where condition and add
-                        if not self._where_condition or self._where_condition(
-                            match, self._target_graph, self._return_edges
-                        ):
-                            self_matches.append(match)
+                        if self._where_condition:
+                            satisfies_where, where_results = self._where_condition(
+                                match, self._target_graph, self._return_edges
+                            )
+                        else:
+                            where_results = []
+                        if not self._where_condition or satisfies_where:
+                            self_matches.append((match, where_results))
                             self_matche_paths.append(edge_hop_map)
 
                             # Check if limit reached; stop ONLY IF we are not ordering
