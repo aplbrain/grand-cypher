@@ -334,8 +334,7 @@ def or_(cond_a, cond_b):
 
 def cond_(should_be, entity_id, operator, value) -> CONDITION:
     def inner(
-        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_endges: list, 
-        return_results: bool = True
+        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_endges: list
     ) -> bool:
         host_entity_id = entity_id.split(".")
         if host_entity_id[0] in match:
@@ -365,8 +364,8 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
                 val = False
 
         if val != should_be:
-            return False, operator_results if return_results else False
-        return True, operator_results if return_results else True
+            return False, operator_results
+        return True, operator_results
 
     return inner
 
