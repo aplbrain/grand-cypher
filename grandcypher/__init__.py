@@ -84,13 +84,11 @@ op                  : "==" -> op_eq
 
 return_clause       : "return"i distinct_return? return_item ("," return_item)*
 return_item         : (entity_id | aggregation_function | entity_id "." attribute_id) ( "AS"i alias )?
-return_item         : (entity_id | aggregation_function | entity_id "." attribute_id) ( "AS"i alias )?
+alias               : CNAME
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
-alias                : CNAME
-alias                : CNAME
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
