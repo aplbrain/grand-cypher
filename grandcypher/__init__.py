@@ -162,7 +162,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -314,17 +314,17 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
 def and_(cond_a, cond_b) -> CONDITION:
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_endges) 
+        condition_a, where_a = cond_a(match, host, return_endges)
         condition_b, where_b = cond_b(match, host, return_endges)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
-    
+
     return inner
 
 
 def or_(cond_a, cond_b):
     def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_endges) 
+        condition_a, where_a = cond_a(match, host, return_endges)
         condition_b, where_b = cond_b(match, host, return_endges)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
@@ -419,7 +419,7 @@ class _GrandCypherTransformer(Transformer):
                 # exclude edge(s) from multiedge that don't satisfy the where condition
                 edge = {k: v for k, v in edge[0].items() if where_results[k] is True}
                 return [edge]
-            
+
         if not data_paths:
             return {}
 
@@ -480,8 +480,13 @@ class _GrandCypherTransformer(Transformer):
                 ret = (
                     _filter_edge(
                         _get_edge(
-                            self._target_graph, mapping[0], match_path, mapping_u, mapping_v
-                        ), mapping[1]
+                            self._target_graph,
+                            mapping[0],
+                            match_path,
+                            mapping_u,
+                            mapping_v,
+                        ),
+                        mapping[1],
                     )
                     for mapping, match_path in true_matches
                 )
@@ -506,7 +511,11 @@ class _GrandCypherTransformer(Transformer):
                         for r in ret:
 
                             r = {
-                                k: v for k, v in r.items() if v.get("__labels__", None).intersection(motif_edge_labels)
+                                k: v
+                                for k, v in r.items()
+                                if v.get("__labels__", None).intersection(
+                                    motif_edge_labels
+                                )
                             }
                             if len(r) > 0:
                                 filtered_ret.append(r)
@@ -542,7 +551,9 @@ class _GrandCypherTransformer(Transformer):
                 if isinstance(item, Tree) and item.data == "aggregation_function":
                     func, entity = self._parse_aggregation_token(item)
                     if alias:
-                        self._entity2alias[self._format_aggregation_key(func, entity)] = alias
+                        self._entity2alias[
+                            self._format_aggregation_key(func, entity)
+                        ] = alias
                     self._aggregation_attributes.add(entity)
                     self._aggregate_functions.append((func, entity))
                 else:
@@ -556,26 +567,26 @@ class _GrandCypherTransformer(Transformer):
         self._alias2entity.update({v: k for k, v in self._entity2alias.items()})
 
     def _extract_alias(self, item: Tree):
-        '''
+        """
         Extract the alias from the return item (if it exists)
-        '''
+        """
 
         if len(item.children) == 1:
             return None
         item_keys = [it.data if isinstance(it, Tree) else None for it in item.children]
-        if any(k == 'alias' for k in item_keys):
-            # get the index of the alias
-            alias_index = item_keys.index('alias')
+        if any(k == "alias" for k in item_keys):
+            # get the index of the alias
+            alias_index = item_keys.index("alias")
             return str(item.children[alias_index].children[0].value)
-        
+
         return None
-    
+
     def _parse_aggregation_token(self, item: Tree):
-        '''
+        """
         Parse the aggregation function token and return the function and entity
             input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Token('CNAME', 'r'), Tree('attribute_id', [Token('CNAME', 'value')])])
             output: ('SUM', 'r.value')
-        '''
+        """
         func = str(item.children[0].value)  # AGGREGATE_FUNC
         entity = str(item.children[1].value)
         if len(item.children) > 2:
@@ -589,12 +600,17 @@ class _GrandCypherTransformer(Transformer):
     def order_clause(self, order_clause):
         self._order_by = []
         for item in order_clause[0].children:
-            if isinstance(item.children[0], Tree) and item.children[0].data == "aggregation_function":
+            if (
+                isinstance(item.children[0], Tree)
+                and item.children[0].data == "aggregation_function"
+            ):
                 func, entity = self._parse_aggregation_token(item.children[0])
                 field = self._format_aggregation_key(func, entity)
                 self._order_by_attributes.add(entity)
             else:
-                field = str(item.children[0])  # assuming the field name is the first child
+                field = str(
+                    item.children[0]
+                )  # assuming the field name is the first child
                 self._order_by_attributes.add(field)
 
             # Default to 'ASC' if not specified
@@ -687,8 +703,12 @@ class _GrandCypherTransformer(Transformer):
 
     def returns(self, ignore_limit=False):
 
-        data_paths = self._return_requests + list(self._order_by_attributes) + list(self._aggregation_attributes)
-        # aliases should already be requested in their original form, so we will remove them for lookup 
+        data_paths = (
+            self._return_requests
+            + list(self._order_by_attributes)
+            + list(self._aggregation_attributes)
+        )
+        # aliases should already be requested in their original form, so we will remove them for lookup
         data_paths = [d for d in data_paths if d not in self._alias2entity]
         results = self._lookup(
             data_paths,
@@ -739,10 +759,10 @@ class _GrandCypherTransformer(Transformer):
                 indices = range(
                     len(next(iter(results.values())))
                 )  # Safe because all lists are assumed to be of the same length
-                for (sort_list, field, direction) in reversed(
+                for sort_list, field, direction in reversed(
                     sort_lists
                 ):  # reverse to ensure the first sort key is primary
-                    
+
                     if all(isinstance(item, dict) for item in sort_list):
                         # (for edge attributes) If all items in sort_list are dictionaries
                         # example: ([{(0, 'paid'): 9, (1, 'paid'): 40}, {(0, 'paid'): 14}], 'DESC')
@@ -761,7 +781,8 @@ class _GrandCypherTransformer(Transformer):
                         # then sort the indices based on the sorted sublists
                         indices = sorted(
                             indices,
-                            key=lambda i: list(sort_list[i].values())[0] or 0,  # 0 if `None`
+                            key=lambda i: list(sort_list[i].values())[0]
+                            or 0,  # 0 if `None`
                             reverse=(direction == "DESC"),
                         )
                         # update results with sorted edge attributes list

@@ -1,5 +1,18 @@
 # CHANGELOG
 
+### **0.10.0** (October 18 2024)
+
+> Bugfix for searching multigraphs, and other improvements for multigraphs.
+
+#### Features
+
+-   Aliasing (`RETURN SUM(r.value) AS myvalue`) (#46, thanks @jackboyla!)
+
+#### Fixes
+
+-   Fix bug in searching multigraphs where unwanted edges between returned nodes were returned (#48, thanks @jackboyla!)
+-   Unify digraph and multigraph implementations (#46, thanks @jackboyla!)
+
 ### **0.9.0** (June 11 2024)
 
 > Support for aggregate functions like `COUNT`, `SUM`, `MIN`, `MAX`, and `AVG`.

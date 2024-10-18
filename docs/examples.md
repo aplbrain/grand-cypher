@@ -1,4 +1,3 @@
-
 ## Multigraph
 
 ```python
@@ -21,13 +20,17 @@ RETURN n.name, m.name, r.amount
 res = GrandCypher(host).run(qry)
 print(res)
 
-'''
+```
+
+```python
 {
-    'n.name': ['Alice', 'Bob'], 
-    'm.name': ['Bob', 'Alice'], 
-    'r.amount': [{(0, 'paid'): 12, (1, 'friends'): None, (2, 'paid'): 40}, {(0, 'paid'): 6, (1, 'paid'): None}]
+    "n.name": ["Alice", "Bob"],
+    "m.name": ["Bob", "Alice"],
+    "r.amount": [
+        {(0, "paid"): 12, (1, "paid"): 40},
+        {(0, "paid"): 6, (1, "paid"): None},
+    ],
 }
-'''
 ```
 
 ## Aggregation Functions
@@ -51,16 +54,12 @@ RETURN n.name, m.name, SUM(r.amount)
 """
 res = GrandCypher(host).run(qry)
 print(res)
-
-'''
-{
-    'n.name': ['Alice', 'Bob'], 
-    'm.name': ['Bob', 'Alice'], 
-    'SUM(r.amount)': [{'paid': 52, 'friends': 0}, {'paid': 6}]
-}
-'''
 ```
 
-
-
-
+```python
+{
+    "n.name": ["Alice", "Bob"],
+    "m.name": ["Bob", "Alice"],
+    "SUM(r.amount)": [{"paid": 52}, {"paid": 6}],
+}
+```
