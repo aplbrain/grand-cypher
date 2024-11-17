@@ -11,12 +11,19 @@ from typing import Dict, List, Callable, Tuple, Union
 from collections import OrderedDict
 import random
 import string
+import logging
 from functools import lru_cache
 import networkx as nx
 
 import grandiso
 
 from lark import Lark, Transformer, v_args, Token, Tree
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 _OPERATORS = {
@@ -162,7 +169,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -390,7 +397,10 @@ def _data_path_to_entity_name_attribute(data_path):
 
 class _GrandCypherTransformer(Transformer):
     def __init__(self, target_graph: nx.Graph, limit=None):
-        self._target_graph = nx.MultiDiGraph(target_graph)
+        self._target_graph = target_graph
+        if not isinstance(self._target_graph, nx.MultiDiGraph):
+            self._target_graph = nx.MultiDiGraph(target_graph)
+            logger.warning("Converting graph to MultiDiGraph")
         self._entity2alias = dict()
         self._alias2entity = dict()
         self._paths = []
