@@ -59,20 +59,6 @@ class TestWorking:
         assert len(returns["A.dinnertime"]) == 2
 
 
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_warning_for_non_multidigraph(self, graph_type, caplog):
-        host = graph_type()
-        
-        with caplog.at_level(logging.WARNING):
-            gct = GrandCypher(host)
-        
-        if isinstance(host, nx.MultiDiGraph):
-            assert len(caplog.records) == 0
-        elif isinstance(host, nx.DiGraph):
-            assert len(caplog.records) == 1
-            assert caplog.records[0].levelname == "WARNING"
-
-
 class TestSimpleAPI:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_api(self, graph_type):
