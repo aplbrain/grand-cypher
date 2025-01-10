@@ -1,5 +1,17 @@
 # CHANGELOG
 
+### **0.12.0** (January 10 2025)
+
+#### Housekeeping
+
+-   Switch to maintained `lark` parser (#60, thanks @ntjess!)
+
+### **0.11.0** (December 4 2024)
+
+#### Features
+
+-   Support multidigraph/digraph without up-conversion (#55, thanks @jackboyla!)
+
 ### **0.10.0** (October 18 2024)
 
 > Bugfix for searching multigraphs, and other improvements for multigraphs.

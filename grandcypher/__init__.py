@@ -20,8 +20,7 @@ import grandiso
 from lark import Lark, Transformer, v_args, Token, Tree
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -169,7 +168,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.10.1"
+__version__ = "0.12.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -270,7 +269,7 @@ def _get_edge_attributes(graph: Union[nx.Graph, nx.MultiDiGraph], u, v) -> Dict:
         return graph.get_edge_data(u, v)
     else:
         data = graph.get_edge_data(u, v)
-        return {0: data}   # Wrap in dict to mimic MultiDiGraph structure
+        return {0: data}  # Wrap in dict to mimic MultiDiGraph structure
 
 
 def _aggregate_edge_labels(edges: Dict) -> Dict:
@@ -989,7 +988,7 @@ class _GrandCypherTransformer(Transformer):
             if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
                 new_motif.add_node(n, **motif.nodes[n])
         motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
-        
+
         if motif.is_multigraph():
             edge_iter = motif.edges(keys=True)
         else:
