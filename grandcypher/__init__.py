@@ -68,9 +68,9 @@ condition           : entity_id op entity_id_or_value
 
 ?entity_id_or_value : entity_id
                     | value
-                    | "NULL"i -> null
-                    | "TRUE"i -> true
-                    | "FALSE"i -> false
+                    | NULL -> null
+                    | TRUE -> true
+                    | FALSE -> false
 
 op                  : "==" -> op_eq
                     | "=" -> op_eq
@@ -149,9 +149,13 @@ boolean_arithmetic  : "and"i -> where_and
 key                 : CNAME
 ?value              : ESTRING
                     | NUMBER
-                    | "NULL"i -> null
-                    | "TRUE"i -> true
-                    | "FALSE"i -> false
+                    | NULL -> null
+                    | TRUE -> true
+                    | FALSE -> false
+
+NULL.1                : "NULL"i
+TRUE.1                : "TRUE"i
+FALSE.1               : "FALSE"i
 
 
 %import common.CNAME            -> CNAME
