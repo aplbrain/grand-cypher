@@ -64,6 +64,7 @@ compound_condition  : condition
                     | compound_condition boolean_arithmetic compound_condition
 
 condition           : entity_id op entity_id_or_value
+                    | entity_id op_list value_list
                     | "not"i condition -> condition_not
 
 ?entity_id_or_value : entity_id
@@ -80,11 +81,11 @@ op                  : "==" -> op_eq
                     | ">="-> op_gte
                     | "<="-> op_lte
                     | "is"i -> op_is
-                    | "in"i -> op_in
                     | "contains"i -> op_contains
                     | "starts with"i -> op_starts_with
                     | "ends with"i -> op_ends_with
 
+op_list             : "in"i -> op_in
 
 
 
@@ -131,6 +132,7 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
 
+value_list          : "[" [value ("," value)*] "]"
 type_list           : TYPE ( "|" TYPE )*
 
 LEFT_ANGLE          : "<"
@@ -1178,6 +1180,9 @@ class _GrandCypherTransformer(Transformer):
     false = lambda self, _: False
     ESTRING = v_args(inline=True)(eval)
     NUMBER = v_args(inline=True)(eval)
+
+    def value_list(self, items):
+        return list(items)
 
     def op(self, operator):
         return operator

@@ -2166,3 +2166,22 @@ class TestMatchWithOrOperatorInRelationships:
         res = GrandCypher(host).run(qry)
         assert res["n1.name"] == ["Bob", "Bob"]
         assert res["n2.name"] == ["Carol", "Derek"]
+
+class TestList:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_in(self, graph_type):
+        host = graph_type()
+        host.add_node(1, name="Ford Prefect")
+        host.add_node(2, name="Arthur Dent")
+        host.add_node(3, name="John Smith")
+        host.add_edge(1, 2)
+        host.add_edge(2, 3)
+
+        qry = """
+        MATCH (A)
+        WHERE A IN [1, 3]
+        RETURN A
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert res["A"] == [1, 3]
