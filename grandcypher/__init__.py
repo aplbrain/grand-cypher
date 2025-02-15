@@ -65,6 +65,8 @@ compound_condition  : condition
 
 condition           : entity_id op entity_id_or_value
                     | entity_id op_list value_list
+                    | function op entity_id_or_value
+                    | function op_list value_list
                     | "not"i condition -> condition_not
 
 ?entity_id_or_value : entity_id
@@ -96,6 +98,8 @@ alias               : CNAME
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
+
+function            : "id"i "(" entity_id ")" -> id_function
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -1180,6 +1184,9 @@ class _GrandCypherTransformer(Transformer):
     false = lambda self, _: False
     ESTRING = v_args(inline=True)(eval)
     NUMBER = v_args(inline=True)(eval)
+
+    def id_function(self, entity_id):
+        return entity_id[0].value
 
     def value_list(self, items):
         return list(items)
