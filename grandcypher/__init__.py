@@ -63,10 +63,8 @@ compound_condition  : condition
                     | "(" compound_condition boolean_arithmetic compound_condition ")"
                     | compound_condition boolean_arithmetic compound_condition
 
-condition           : entity_id op entity_id_or_value
-                    | entity_id op_list value_list
-                    | function op entity_id_or_value
-                    | function op_list value_list
+condition           : (entity_id | scalar_function) op entity_id_or_value
+                    | (entity_id | scalar_function) op_list value_list
                     | "not"i condition -> condition_not
 
 ?entity_id_or_value : entity_id
@@ -92,14 +90,14 @@ op_list             : "in"i -> op_in
 
 
 return_clause       : "return"i distinct_return? return_item ("," return_item)*
-return_item         : (entity_id | aggregation_function | entity_id "." attribute_id) ( "AS"i alias )?
+return_item         : (entity_id | aggregation_function | scalar_function | entity_id "." attribute_id) ( "AS"i alias )?
 alias               : CNAME
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
 
-function            : "id"i "(" entity_id ")" -> id_function
+scalar_function      : "id"i "(" entity_id ")" -> id_function
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER

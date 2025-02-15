@@ -2180,7 +2180,7 @@ class TestFunction:
         qry = """
         MATCH (A)
         WHERE id(A) == 1 OR id(A) == 2
-        RETURN A
+        RETURN id(A)
         """
 
         res = GrandCypher(host).run(qry)
