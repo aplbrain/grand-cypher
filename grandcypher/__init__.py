@@ -63,14 +63,15 @@ compound_condition  : condition
                     | "(" compound_condition boolean_arithmetic compound_condition ")"
                     | compound_condition boolean_arithmetic compound_condition
 
-condition           : entity_id op entity_id_or_value
+condition           : (entity_id | scalar_function) op entity_id_or_value
+                    | (entity_id | scalar_function) op_list value_list
                     | "not"i condition -> condition_not
 
 ?entity_id_or_value : entity_id
                     | value
-                    | "NULL"i -> null
-                    | "TRUE"i -> true
-                    | "FALSE"i -> false
+                    | NULL -> null
+                    | TRUE -> true
+                    | FALSE -> false
 
 op                  : "==" -> op_eq
                     | "=" -> op_eq
@@ -80,21 +81,23 @@ op                  : "==" -> op_eq
                     | ">="-> op_gte
                     | "<="-> op_lte
                     | "is"i -> op_is
-                    | "in"i -> op_in
                     | "contains"i -> op_contains
                     | "starts with"i -> op_starts_with
                     | "ends with"i -> op_ends_with
 
+op_list             : "in"i -> op_in
 
 
 
 return_clause       : "return"i distinct_return? return_item ("," return_item)*
-return_item         : (entity_id | aggregation_function | entity_id "." attribute_id) ( "AS"i alias )?
+return_item         : (entity_id | aggregation_function | scalar_function | entity_id "." attribute_id) ( "AS"i alias )?
 alias               : CNAME
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
+
+scalar_function      : "id"i "(" entity_id ")" -> id_function
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -131,6 +134,7 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
 
+value_list          : "[" [value ("," value)*] "]"
 type_list           : TYPE ( "|" TYPE )*
 
 LEFT_ANGLE          : "<"
@@ -149,9 +153,13 @@ boolean_arithmetic  : "and"i -> where_and
 key                 : CNAME
 ?value              : ESTRING
                     | NUMBER
-                    | "NULL"i -> null
-                    | "TRUE"i -> true
-                    | "FALSE"i -> false
+                    | NULL -> null
+                    | TRUE -> true
+                    | FALSE -> false
+
+NULL.1                : "NULL"i
+TRUE.1                : "TRUE"i
+FALSE.1               : "FALSE"i
 
 
 %import common.CNAME            -> CNAME
@@ -1174,6 +1182,12 @@ class _GrandCypherTransformer(Transformer):
     false = lambda self, _: False
     ESTRING = v_args(inline=True)(eval)
     NUMBER = v_args(inline=True)(eval)
+
+    def id_function(self, entity_id):
+        return entity_id[0].value
+
+    def value_list(self, items):
+        return list(items)
 
     def op(self, operator):
         return operator
