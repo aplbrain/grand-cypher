@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="grand-cypher",
-    version="0.12.0",
+    version="0.13.0",
     author="Jordan Matelsky",
     author_email="opensource@matelsky.com",
     description="Query Grand graphs using Cypher",

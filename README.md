@@ -62,30 +62,31 @@ RETURN
 
 # Feature Parity
 
-| Feature                                                     | Support               |
-| ----------------------------------------------------------- | --------------------- |
-| Multiple `MATCH` clauses                                    | ✅                    |
-| `WHERE`-clause filtering on nodes                           | ✅                    |
-| Anonymous `-[]-` edges                                      | ✅                    |
-| `LIMIT`                                                     | ✅                    |
-| `SKIP`                                                      | ✅                    |
-| Node/edge attributes with `{}` syntax                       | ✅                    |
-| `WHERE`-clause filtering on edges                           | ✅                    |
-| Named `-[]-` edges                                          | ✅                    |
-| Chained `()-[]->()-[]->()` edges                            | ✅ Thanks @khoale88!  |
-| Backwards `()<-[]-()` edges                                 | ✅ Thanks @khoale88!  |
-| Anonymous `()` nodes                                        | ✅ Thanks @khoale88!  |
-| Undirected `()-[]-()` edges                                 | ✅ Thanks @khoale88!  |
-| Boolean Arithmetic (`AND`/`OR`)                             | ✅ Thanks @khoale88!  |
-| `(:Type)` node-labels                                       | ✅ Thanks @khoale88!  |
-| `[:Type]` edge-labels                                       | ✅ Thanks @khoale88!  |
-| `DISTINCT`                                                  | ✅ Thanks @jackboyla! |
-| `ORDER BY`                                                  | ✅ Thanks @jackboyla! |
-| Aggregation functions (`COUNT`, `SUM`, `MIN`, `MAX`, `AVG`) | ✅ Thanks @jackboyla! |
-| Aliasing of returned entities (`return X as Y`)             | ✅ Thanks @jackboyla! |
-| Negated edges (`where not (a)-->(b)`)                       | 🥺                    |
-| `OPTIONAL MATCH`                                            | 🥺                    |
-| Graph mutations (e.g. `DELETE`, `SET`,...)                  | 🥺                    |
+| Feature                                                     | Support                   |
+| ----------------------------------------------------------- | ------------------------- |
+| Multiple `MATCH` clauses                                    | ✅                        |
+| `WHERE`-clause filtering on nodes                           | ✅                        |
+| Anonymous `-[]-` edges                                      | ✅                        |
+| `LIMIT`                                                     | ✅                        |
+| `SKIP`                                                      | ✅                        |
+| Node/edge attributes with `{}` syntax                       | ✅                        |
+| `WHERE`-clause filtering on edges                           | ✅                        |
+| Named `-[]-` edges                                          | ✅                        |
+| Chained `()-[]->()-[]->()` edges                            | ✅ Thanks @khoale88!      |
+| Backwards `()<-[]-()` edges                                 | ✅ Thanks @khoale88!      |
+| Anonymous `()` nodes                                        | ✅ Thanks @khoale88!      |
+| Undirected `()-[]-()` edges                                 | ✅ Thanks @khoale88!      |
+| Boolean Arithmetic (`AND`/`OR`)                             | ✅ Thanks @khoale88!      |
+| `(:Type)` node-labels                                       | ✅ Thanks @khoale88!      |
+| `[:Type]` edge-labels                                       | ✅ Thanks @khoale88!      |
+| `DISTINCT`                                                  | ✅ Thanks @jackboyla!     |
+| `ORDER BY`                                                  | ✅ Thanks @jackboyla!     |
+| `IN`                                                        | ✅ Thanks @davidmezzetti! |
+| Aggregation functions (`COUNT`, `SUM`, `MIN`, `MAX`, `AVG`) | ✅ Thanks @jackboyla!     |
+| Aliasing of returned entities (`return X as Y`)             | ✅ Thanks @jackboyla!     |
+| Negated edges (`where not (a)-->(b)`)                       | 🥺                        |
+| `OPTIONAL MATCH`                                            | 🥺                        |
+| Graph mutations (e.g. `DELETE`, `SET`,...)                  | 🥺                        |
 
 |                |                |                   |                  |
 | -------------- | -------------- | ----------------- | ---------------- |

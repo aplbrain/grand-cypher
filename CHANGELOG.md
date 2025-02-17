@@ -1,5 +1,19 @@
 # CHANGELOG
 
+### **0.13.0** (February 17 2025)
+
+#### Housekeeping
+
+-   Remove EOL Python 3.7 and 3.8 from CI, and adds 3.12 and 3.13 (#66, thanks @davidmezzetti!)
+
+#### Features
+
+-   Support for `IN` clause (#66, thanks @davidmezzetti!)
+
+#### Fixes
+
+-   Fix regression in `null` / `true` / `false` (#66, thanks @davidmezzetti!)
+
 ### **0.12.0** (January 10 2025)
 
 #### Housekeeping
