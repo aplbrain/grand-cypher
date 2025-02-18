@@ -7,7 +7,7 @@ to search in a much larger graph database.
 
 """
 
-from typing import Dict, List, Callable, Tuple, Union
+from typing import Dict, List, Callable, Tuple, Union, Hashable
 from collections import OrderedDict
 import random
 import string
@@ -23,6 +23,8 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+_HintType = List[Dict[Hashable, Hashable]]
 
 
 _OPERATORS = {
@@ -433,8 +435,9 @@ class _GrandCypherTransformer(Transformer):
         self._skip = 0
         self._max_hop = 100
 
-    def _lookup(self, data_paths: List[str], offset_limit) -> Dict[str, List]:
-
+    def _lookup(
+        self, data_paths: List[str], hints: _HintType | None, offset_limit
+    ) -> Dict[str, List]:
         def _filter_edge(edge, where_results):
             # no where condition -> return edge
             if where_results == []:
@@ -459,7 +462,7 @@ class _GrandCypherTransformer(Transformer):
                 raise NotImplementedError(f"Unknown entity name: {data_path}")
 
         result = {}
-        true_matches = self._get_true_matches()
+        true_matches = self._get_true_matches(hints)
 
         for data_path in data_paths:
             entity_name, entity_attribute = _data_path_to_entity_name_attribute(
@@ -533,7 +536,6 @@ class _GrandCypherTransformer(Transformer):
                         # filter the retrieved edge(s) based on the motif edge labels
                         filtered_ret = []
                         for r in ret:
-
                             r = {
                                 k: v
                                 for k, v in r.items()
@@ -725,8 +727,7 @@ class _GrandCypherTransformer(Transformer):
         aggregate_results = [v for v in aggregate_results.values()]
         return aggregate_results
 
-    def returns(self, ignore_limit=False):
-
+    def returns(self, hints: _HintType | None = None, ignore_limit=False):
         data_paths = (
             self._return_requests
             + list(self._order_by_attributes)
@@ -736,6 +737,7 @@ class _GrandCypherTransformer(Transformer):
         data_paths = [d for d in data_paths if d not in self._alias2entity]
         results = self._lookup(
             data_paths,
+            hints=hints,
             offset_limit=slice(0, None),
         )
         if len(self._aggregate_functions) > 0:
@@ -795,7 +797,6 @@ class _GrandCypherTransformer(Transformer):
                 for sort_list, field, direction in reversed(
                     sort_lists
                 ):  # reverse to ensure the first sort key is primary
-
                     if all(isinstance(item, dict) for item in sort_list):
                         # (for edge attributes) If all items in sort_list are dictionaries
                         # example: ([{(0, 'paid'): 9, (1, 'paid'): 40}, {(0, 'paid'): 14}], 'DESC')
@@ -836,9 +837,9 @@ class _GrandCypherTransformer(Transformer):
 
     def _apply_distinct(self, results):
         if self._order_by:
-            assert self._order_by_attributes.issubset(
-                self._return_requests
-            ), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
+            assert self._order_by_attributes.issubset(self._return_requests), (
+                "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
+            )
 
         # ordered dict to maintain the first occurrence of each unique tuple based on return requests
         unique_rows = OrderedDict()
@@ -880,7 +881,7 @@ class _GrandCypherTransformer(Transformer):
 
         return results
 
-    def _get_true_matches(self):
+    def _get_true_matches(self, hints: _HintType | None):
         if not self._matches:
             self_matches = []
             self_matche_paths = []
@@ -896,7 +897,7 @@ class _GrandCypherTransformer(Transformer):
                 ]
 
                 # Iterate over generated matches
-                for match in self._matches_iter(my_motif):
+                for match in self._matches_iter(my_motif, hints):
                     # matches can contains zero hop edges from A to B
                     # there are 2 cases to take care
                     # (1) there are both A and B in the match. This case is the result of query A -[*0]-> B --> C.
@@ -933,7 +934,7 @@ class _GrandCypherTransformer(Transformer):
 
         return list(zip(self._matches, self._matche_paths))
 
-    def _matches_iter(self, motif):
+    def _matches_iter(self, motif, hints: _HintType | None = None):
         # Get list of all match iterators
         iterators = [
             grandiso.find_motifs_iter(
@@ -941,6 +942,7 @@ class _GrandCypherTransformer(Transformer):
                 self._target_graph,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
+                hints=hints,
             )
             for c in nx.weakly_connected_components(motif)
         ]
@@ -948,7 +950,6 @@ class _GrandCypherTransformer(Transformer):
         # Single match clause iterator
         if iterators and len(iterators) == 1:
             yield from iterators[0]
-
         # Multi match clause, requires a cartesian join
         else:
             iterations, matches = 0, {}
@@ -1260,12 +1261,13 @@ class GrandCypher:
         self._transformer = _GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
 
-    def run(self, cypher: str) -> Dict[str, List]:
+    def run(self, cypher: str, hints: _HintType | None = None) -> Dict[str, List]:
         """
         Run a cypher query on the host graph.
 
         Arguments:
             cypher (str): The cypher query to run
+            hints (list): A list of hints to provide to the query engine
 
         Returns:
             Dict[str, List]: A dictionary mapping of results, where keys are
@@ -1274,4 +1276,5 @@ class GrandCypher:
 
         """
         self._transformer.transform(_GrandCypherGrammar.parse(cypher))
-        return self._transformer.returns()
+        rets = self._transformer.returns(hints)
+        return rets
