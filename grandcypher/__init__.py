@@ -7,7 +7,7 @@ to search in a much larger graph database.
 
 """
 
-from typing import Dict, Hashable, List, Callable, Tuple, Union
+from typing import Dict, Hashable, List, Callable, Optional, Tuple, Union
 from collections import OrderedDict
 import random
 import string
@@ -432,7 +432,7 @@ class _GrandCypherTransformer(Transformer):
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
-        self._hints: list[dict[Hashable, Hashable]] | None = None
+        self._hints: Optional[List[dict[Hashable, Hashable]]] = None
 
     def set_hints(self, hints=None):
         self._hints = hints
@@ -1309,7 +1309,7 @@ class GrandCypher:
         self._transformer = _GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
 
-    def run(self, cypher: str, hints: List[dict] | None = None) -> Dict[str, List]:
+    def run(self, cypher: str, hints: Optional[List[dict]] = None) -> Dict[str, List]:
         """
         Run a cypher query on the host graph.
 
