@@ -413,12 +413,12 @@ def _data_path_to_entity_name_attribute(data_path):
 
 
 class _GrandCypherTransformer(Transformer):
-    def __init__(self, target_graph: nx.Graph, limit=None):
+    def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None):
         self._target_graph = target_graph
         self._entity2alias = dict()
         self._alias2entity = dict()
         self._paths = []
-        self._where_condition: CONDITION = None
+        self._where_condition = None  # type: Optional[CONDITION]
         self._motif = nx.MultiDiGraph()
         self._matches = None
         self._matche_paths = None
@@ -432,7 +432,7 @@ class _GrandCypherTransformer(Transformer):
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
-        self._hints: Optional[List[dict[Hashable, Hashable]]] = None
+        self._hints: Optional[List[Dict[Hashable, Hashable]]] = None
 
     def set_hints(self, hints=None):
         self._hints = hints
@@ -974,34 +974,18 @@ class _GrandCypherTransformer(Transformer):
                 self._target_graph,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
+                hints=self._hints if self._hints is not None else [],
             )
             for c in nx.weakly_connected_components(motif)
         ]
 
         # Single match clause iterator
         if iterators and len(iterators) == 1:
-            for match in iterators[0]:
-                # Apply hints filter first
-                if self._hints:
-                    # Only process matches that match at least one of the provided hints
-                    if not any(
-                        all(match.get(k) == v for k, v in hint.items())
-                        for hint in self._hints
-                    ):
-                        continue
-                yield match
+            yield from iterators[0]
         else:
             iterations, matches = 0, {}
             for x, iterator in enumerate(iterators):
                 for match in iterator:
-                    # Apply hints filter first
-                    if self._hints:
-                        # Only process matches that match at least one of the provided hints
-                        if not any(
-                            all(match.get(k) == v for k, v in hint.items())
-                            for hint in self._hints
-                        ):
-                            continue
                     if x not in matches:
                         matches[x] = []
                     matches[x].append(match)
@@ -1325,30 +1309,4 @@ class GrandCypher:
 
         """
         self._transformer.transform(_GrandCypherGrammar.parse(cypher), hints=hints)
-
-        # When we have hints, we need to strictly enforce them in the final results
-        result = self._transformer.returns()
-
-        # Filter results based on provided hints if any
-        if hints:
-            filtered_result = {}
-            for key, values in result.items():
-                # Find the indices of values that match our hints
-                valid_indices = []
-                for i, _ in enumerate(values):
-                    # Filter only results where the specified node matches the hint
-                    if all(
-                        any(
-                            self._transformer._matches[j][0].get(node_name) == node_id
-                            for j in range(len(self._transformer._matches))
-                        )
-                        for hint in hints
-                        for node_name, node_id in hint.items()
-                    ):
-                        valid_indices.append(i)
-
-                # Keep only the values at valid indices
-                filtered_result[key] = [values[i] for i in valid_indices]
-            return filtered_result
-
-        return result
+        return self._transformer.returns()
