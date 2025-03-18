@@ -2,7 +2,7 @@ import networkx as nx
 import pytest
 
 
-from . import _GrandCypherGrammar, _GrandCypherTransformer, GrandCypher
+from . import GrandCypher
 
 ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
 
@@ -72,6 +72,20 @@ class TestHints:
         res = gc.run(qry, hints=[{"A": 3}])
         assert res == {"A.name": ["Zaphod Beeblebrox"]}
 
-        # gc = GrandCypher(host)
-        # res = gc.run(qry, hints=[{"A": 1}])
-        # assert res == {"A.name": ["Ford Prefect"]}
+        gc = GrandCypher(host)
+        res = gc.run(qry, hints=[{"A": 1}])
+        assert res == {"A.name": ["Ford Prefect"]}
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_ER_hints(self, graph_type):
+        """
+        Test random graphs
+        """
+        host = nx.fast_gnp_random_graph(100, 0.1, directed=nx.is_directed(graph_type()))
+        hints = [{"A": 1}]
+        gc = GrandCypher(host)
+        qry = """
+        MATCH (A)-[r]->(B) RETURN A
+        """
+        res = gc.run(qry, hints=hints)
+        assert all(r == 1 for r in res["A"])

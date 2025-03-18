@@ -187,7 +187,6 @@ class TestSimpleAPI:
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
         assert list(res.values())[0] == ["x", "x", "y"]
-        print(res)
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_single_edge_where(self, graph_type):
@@ -253,7 +252,6 @@ class TestSimpleAPI:
         AND BC.weight > 11
         RETURN AB
         """
-        print(GrandCypher(host).run(qry))
         assert len(GrandCypher(host).run(qry)["AB"]) == 1
 
 
