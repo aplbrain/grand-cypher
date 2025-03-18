@@ -7,7 +7,7 @@ to search in a much larger graph database.
 
 """
 
-from typing import Dict, List, Callable, Tuple, Union, Hashable
+from typing import Dict, Hashable, List, Callable, Tuple, Union
 from collections import OrderedDict
 import random
 import string
@@ -23,8 +23,6 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-_HintType = List[Dict[Hashable, Hashable]]
 
 
 _OPERATORS = {
@@ -434,10 +432,17 @@ class _GrandCypherTransformer(Transformer):
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
+        self._hints: list[dict[Hashable, Hashable]] | None = None
 
-    def _lookup(
-        self, data_paths: List[str], hints: _HintType | None, offset_limit
-    ) -> Dict[str, List]:
+    def set_hints(self, hints=None):
+        self._hints = hints
+        return self
+
+    def transform(self, tree, hints=None):
+        self.set_hints(hints)
+        return super().transform(tree)
+
+    def _lookup(self, data_paths: List[str], offset_limit) -> Dict[str, List]:
         def _filter_edge(edge, where_results):
             # no where condition -> return edge
             if where_results == []:
@@ -462,7 +467,7 @@ class _GrandCypherTransformer(Transformer):
                 raise NotImplementedError(f"Unknown entity name: {data_path}")
 
         result = {}
-        true_matches = self._get_true_matches(hints)
+        true_matches = self._get_true_matches()
 
         for data_path in data_paths:
             entity_name, entity_attribute = _data_path_to_entity_name_attribute(
@@ -727,7 +732,7 @@ class _GrandCypherTransformer(Transformer):
         aggregate_results = [v for v in aggregate_results.values()]
         return aggregate_results
 
-    def returns(self, hints: _HintType | None = None, ignore_limit=False):
+    def returns(self, ignore_limit=False):
         data_paths = (
             self._return_requests
             + list(self._order_by_attributes)
@@ -737,7 +742,6 @@ class _GrandCypherTransformer(Transformer):
         data_paths = [d for d in data_paths if d not in self._alias2entity]
         results = self._lookup(
             data_paths,
-            hints=hints,
             offset_limit=slice(0, None),
         )
         if len(self._aggregate_functions) > 0:
@@ -760,8 +764,12 @@ class _GrandCypherTransformer(Transformer):
 
         if self._order_by:
             results = self._apply_order_by(results)
+
+        # Apply DISTINCT before pagination
         if self._distinct:
             results = self._apply_distinct(results)
+
+        # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
 
         # Only include keys that were asked for in `RETURN` in the final results
@@ -837,9 +845,9 @@ class _GrandCypherTransformer(Transformer):
 
     def _apply_distinct(self, results):
         if self._order_by:
-            assert self._order_by_attributes.issubset(self._return_requests), (
-                "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
-            )
+            assert self._order_by_attributes.issubset(
+                self._return_requests
+            ), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
 
         # ordered dict to maintain the first occurrence of each unique tuple based on return requests
         unique_rows = OrderedDict()
@@ -867,74 +875,98 @@ class _GrandCypherTransformer(Transformer):
         return distinct_results
 
     def _apply_pagination(self, results, ignore_limit):
-        # apply LIMIT and SKIP (if set) after ordering
+        """
+        Apply pagination (skip & limit) to results.
+
+        Args:
+            results: Dictionary of result lists
+            ignore_limit: Whether to ignore the limit constraint
+
+        Returns:
+            Dictionary with paginated results
+        """
+        # If there are no results, return early
+        if not results:
+            return results
+
+        # Get the length of any result list (all should be the same length)
+        if not any(results.values()):
+            return results
+
+        result_length = len(next(iter(results.values())))
+        if result_length == 0:
+            return results
+
+        # Apply skip first
+        start_index = min(self._skip or 0, result_length)
+
+        # Then apply limit if needed
         if self._limit is not None and not ignore_limit:
-            start_index = self._skip
-            end_index = start_index + self._limit
-            for key in results.keys():
-                results[key] = results[key][start_index:end_index]
-        # else just apply SKIP (if set)
+            end_index = min(start_index + self._limit, result_length)
         else:
-            for key in results.keys():
-                start_index = self._skip
-                results[key] = results[key][start_index:]
+            end_index = result_length
 
-        return results
+        # Apply pagination to all result lists
+        paginated_results = {}
+        for key, values in results.items():
+            paginated_results[key] = values[start_index:end_index]
 
-    def _get_true_matches(self, hints: _HintType | None):
+        return paginated_results
+
+    def _get_true_matches(self):
+        """Get the true matches after applying WHERE conditions and hints.
+        Returns the matches along with their paths.
+
+        Returns:
+            List of tuples containing (match, path)
+        """
         if not self._matches:
             self_matches = []
             self_matche_paths = []
-            complete = False
 
             for my_motif, edge_hop_map in self._edge_hop_motifs(self._motif):
-                # Iteration is complete
-                if complete:
-                    break
-
+                # Process zero hop edges
                 zero_hop_edges = [
                     k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]
                 ]
 
-                # Iterate over generated matches
-                for match in self._matches_iter(my_motif, hints):
-                    # matches can contains zero hop edges from A to B
-                    # there are 2 cases to take care
-                    # (1) there are both A and B in the match. This case is the result of query A -[*0]-> B --> C.
-                    #   If A != B break else continue to (2)
-                    # (2) there is only A in the match. This case is the result of query A -[*0]-> B.
-                    #   If A is qualified to be B (node attr match), set B = A else break
+                # Collect all valid matches before applying pagination
+                for match in self._matches_iter(my_motif):
+                    # Handle zero hop edges
+                    valid_match = True
                     for a, b in zero_hop_edges:
                         if b in match and match[b] != match[a]:
+                            valid_match = False
                             break
                         if not _is_node_attr_match(
                             b, match[a], self._motif, self._target_graph
                         ):
+                            valid_match = False
                             break
                         match[b] = match[a]
-                    else:  # For/else loop
-                        # Check if match matches where condition and add
-                        if self._where_condition:
-                            satisfies_where, where_results = self._where_condition(
-                                match, self._target_graph, self._return_edges
-                            )
-                        else:
-                            where_results = []
-                        if not self._where_condition or satisfies_where:
-                            self_matches.append((match, where_results))
-                            self_matche_paths.append(edge_hop_map)
 
-                            # Check if limit reached; stop ONLY IF we are not ordering
-                            if self._is_limit(len(self_matches)) and not self._order_by:
-                                complete = True
-                                break
+                    if not valid_match:
+                        continue
+
+                    # Apply WHERE condition if present
+                    if self._where_condition:
+                        satisfies_where, where_results = self._where_condition(
+                            match, self._target_graph, self._return_edges
+                        )
+                        if not satisfies_where:
+                            continue
+                    else:
+                        where_results = []
+
+                    self_matches.append((match, where_results))
+                    self_matche_paths.append(edge_hop_map)
 
             self._matches = self_matches
             self._matche_paths = self_matche_paths
 
         return list(zip(self._matches, self._matche_paths))
 
-    def _matches_iter(self, motif, hints: _HintType | None = None):
+    def _matches_iter(self, motif):
         # Get list of all match iterators
         iterators = [
             grandiso.find_motifs_iter(
@@ -942,43 +974,48 @@ class _GrandCypherTransformer(Transformer):
                 self._target_graph,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
-                hints=hints,
             )
             for c in nx.weakly_connected_components(motif)
         ]
 
         # Single match clause iterator
         if iterators and len(iterators) == 1:
-            yield from iterators[0]
-        # Multi match clause, requires a cartesian join
+            for match in iterators[0]:
+                # Apply hints filter first
+                if self._hints:
+                    # Only process matches that match at least one of the provided hints
+                    if not any(
+                        all(match.get(k) == v for k, v in hint.items())
+                        for hint in self._hints
+                    ):
+                        continue
+                yield match
         else:
             iterations, matches = 0, {}
             for x, iterator in enumerate(iterators):
                 for match in iterator:
+                    # Apply hints filter first
+                    if self._hints:
+                        # Only process matches that match at least one of the provided hints
+                        if not any(
+                            all(match.get(k) == v for k, v in hint.items())
+                            for hint in self._hints
+                        ):
+                            continue
                     if x not in matches:
                         matches[x] = []
-
                     matches[x].append(match)
                     iterations += 1
-
-                    # Continue to next clause if limit reached
                     if self._is_limit(len(matches[x])):
-                        continue
+                        break
 
-            # Cartesian product of all match clauses
             join = []
             for match in matches.values():
                 if join:
                     join = [{**a, **b} for a in join for b in match]
                 else:
                     join = match
-
-            # Yield cartesian product
             yield from join
-
-    def _is_limit(self, count):
-        # Check if limit reached
-        return self._limit and count >= (self._limit + self._skip)
 
     def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> List[Tuple[nx.Graph, dict]]:
         """generate a list of edge-hop-expanded motif with edge-hop-map.
@@ -1235,6 +1272,17 @@ class _GrandCypherTransformer(Transformer):
     def json_rule(self, rule):
         return (rule[0].value, rule[1])
 
+    def _is_limit(self, length):
+        """Check if the current number of results has reached the limit.
+
+        Args:
+            length: The current number of results.
+
+        Returns:
+            True if we've reached the limit, False otherwise.
+        """
+        return self._limit is not None and length >= self._limit
+
 
 class GrandCypher:
     """
@@ -1261,13 +1309,14 @@ class GrandCypher:
         self._transformer = _GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
 
-    def run(self, cypher: str, hints: _HintType | None = None) -> Dict[str, List]:
+    def run(self, cypher: str, hints: list[dict] | None = None) -> Dict[str, List]:
         """
         Run a cypher query on the host graph.
 
         Arguments:
             cypher (str): The cypher query to run
-            hints (list): A list of hints to provide to the query engine
+            hints (list[dict]): A list of partial-mapping hints to pass along
+                                to grandiso.find_motifs
 
         Returns:
             Dict[str, List]: A dictionary mapping of results, where keys are
@@ -1275,6 +1324,31 @@ class GrandCypher:
                 values are all possible matches of that structure in the graph.
 
         """
-        self._transformer.transform(_GrandCypherGrammar.parse(cypher))
-        rets = self._transformer.returns(hints)
-        return rets
+        self._transformer.transform(_GrandCypherGrammar.parse(cypher), hints=hints)
+
+        # When we have hints, we need to strictly enforce them in the final results
+        result = self._transformer.returns()
+
+        # Filter results based on provided hints if any
+        if hints:
+            filtered_result = {}
+            for key, values in result.items():
+                # Find the indices of values that match our hints
+                valid_indices = []
+                for i, _ in enumerate(values):
+                    # Filter only results where the specified node matches the hint
+                    if all(
+                        any(
+                            self._transformer._matches[j][0].get(node_name) == node_id
+                            for j in range(len(self._transformer._matches))
+                        )
+                        for hint in hints
+                        for node_name, node_id in hint.items()
+                    ):
+                        valid_indices.append(i)
+
+                # Keep only the values at valid indices
+                filtered_result[key] = [values[i] for i in valid_indices]
+            return filtered_result
+
+        return result
