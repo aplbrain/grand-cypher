@@ -176,7 +176,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -1309,7 +1309,7 @@ class GrandCypher:
         self._transformer = _GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
 
-    def run(self, cypher: str, hints: list[dict] | None = None) -> Dict[str, List]:
+    def run(self, cypher: str, hints: List[dict] | None = None) -> Dict[str, List]:
         """
         Run a cypher query on the host graph.
 
