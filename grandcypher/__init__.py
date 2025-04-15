@@ -303,8 +303,8 @@ def _get_entity_from_host(
             # and then return the attribute:
             return host.nodes[entity_name].get(entity_attribute, None)
         else:
-            # Otherwise, just return the node from the host graph
-            return entity_name
+            # Otherwise, just return the dict of attributes:
+            return host.nodes[entity_name]
     else:
         # looking for an edge:
         u, v = entity_name
