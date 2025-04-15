@@ -1,5 +1,11 @@
 # CHANGELOG
 
+### **0.14.0** (March 18 2025)
+
+#### Features
+
+-   Support for `hints` in the `run` method (#67)
+
 ### **0.13.0** (February 17 2025)
 
 #### Housekeeping

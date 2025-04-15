@@ -41,6 +41,8 @@ class TestWorking:
         assert "A" in returns
         assert len(returns["A"]) == 2
 
+
+class TestWorking:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_structural_match_returns_node_attributes(self, graph_type):
         tree = _GrandCypherGrammar.parse(
@@ -223,7 +225,6 @@ class TestSimpleAPI:
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
         assert list(res.values())[0] == ["x", "x", "y"]
-        print(res)
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_single_edge_where(self, graph_type):
@@ -290,7 +291,6 @@ class TestSimpleAPI:
         AND BC.weight > 11
         RETURN AB
         """
-        print(GrandCypher(host).run(qry))
         assert len(GrandCypher(host).run(qry)["AB"]) == 1
 
 
@@ -2311,4 +2311,27 @@ class TestList:
         """
 
         res = GrandCypher(host).run(qry)
+        assert res["A"] == [1, 3]
+
+
+class TestReuse:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_use_gc(self, graph_type):
+        host = graph_type()
+        host.add_node(1, name="Ford Prefect")
+        host.add_node(2, name="Arthur Dent")
+        host.add_node(3, name="John Smith")
+        host.add_edge(1, 2)
+        host.add_edge(2, 3)
+
+        qry = """
+        MATCH (A)
+        WHERE id(A) IN [1, 3]
+        RETURN A
+        """
+
+        gc = GrandCypher(host)
+        res = gc.run(qry)
+        assert res["A"] == [1, 3]
+        res = gc.run(qry)
         assert res["A"] == [1, 3]
