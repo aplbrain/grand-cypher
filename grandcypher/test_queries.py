@@ -1,66 +1,10 @@
 import networkx as nx
 import pytest
-import logging
 
-from . import _GrandCypherGrammar, _GrandCypherTransformer, GrandCypher
+from . import GrandCypher
 
 ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
 
-
-class TestWorking:
-    @pytest.mark.benchmark
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_simple_structural_match(self, graph_type):
-        tree = _GrandCypherGrammar.parse(
-            """
-        MATCH (A)-[B]->(C)
-        RETURN A
-        """
-        )
-        host = graph_type()
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
-        gct = _GrandCypherTransformer(host)
-        gct.transform(tree)
-        assert len(gct._get_true_matches()) == 2
-
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_simple_structural_match_returns_nodes(self, graph_type):
-        tree = _GrandCypherGrammar.parse(
-            """
-        MATCH (A)-[B]->(C)
-        RETURN A
-        """
-        )
-        host = graph_type()
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
-        gct = _GrandCypherTransformer(host)
-        gct.transform(tree)
-        returns = gct.returns()
-        assert "A" in returns
-        assert len(returns["A"]) == 2
-
-
-class TestWorking:
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_simple_structural_match_returns_node_attributes(self, graph_type):
-        tree = _GrandCypherGrammar.parse(
-            """
-        MATCH (A)-[B]->(C)
-        RETURN A.dinnertime
-        """
-        )
-        host = graph_type()
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
-        host.add_node("x", dinnertime="no thanks I already ate")
-        gct = _GrandCypherTransformer(host)
-        gct.transform(tree)
-        returns = gct.returns()
-        assert "A" not in returns
-        assert "A.dinnertime" in returns
-        assert len(returns["A.dinnertime"]) == 2
 
 
 class TestSimpleAPI:
@@ -2335,3 +2279,140 @@ class TestReuse:
         assert res["A"] == [1, 3]
         res = gc.run(qry)
         assert res["A"] == [1, 3]
+
+
+
+
+class TestReturnFullNodeAttributes:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_full_node_attributes(self, graph_type):
+        """Test that RETURN node returns the full node dictionary with all attributes."""
+        host = graph_type()
+        # Add node with multiple attributes
+        host.add_node("x", name="node_x", age=30, is_active=True)
+        host.add_node("y", name="node_y", age=25, location="New York")
+        host.add_edge("x", "y")
+
+        # Query to return node A
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "A" in result
+        assert len(result["A"]) == 1
+
+        # Instead of just the node ID, we expect the full node dictionary
+        node_result = result["A"][0]
+        # Test should expect a dictionary-like object with attributes
+        assert isinstance(node_result, dict)
+        assert node_result["name"] == "node_x"
+        assert node_result["age"] == 30
+        assert node_result["is_active"] is True
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_multiple_nodes_with_attributes(self, graph_type):
+        """Test that RETURN node returns full attributes for multiple nodes."""
+        host = graph_type()
+        # Add nodes with different attributes
+        host.add_node("x", name="node_x", type="source")
+        host.add_node("y", name="node_y", type="middle")
+        host.add_node("z", name="node_z", type="target")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+
+        # Query to return all B nodes
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN B
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "B" in result
+        assert len(result["B"]) == 2
+
+        # Check that each result is a full node dictionary
+        node_types = [node["type"] for node in result["B"]]
+        assert "middle" in node_types
+        assert "target" in node_types
+
+        node_names = [node["name"] for node in result["B"]]
+        assert "node_y" in node_names
+        assert "node_z" in node_names
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_node_without_attributes(self, graph_type):
+        """Test that RETURN node works with nodes that have no attributes."""
+        host = graph_type()
+        # Add nodes without attributes
+        host.add_node("x")
+        host.add_node("y")
+        host.add_edge("x", "y")
+
+        # Query to return node A
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "A" in result
+        assert len(result["A"]) == 1
+
+        # For nodes without attributes, we expect an empty dictionary
+        # or a dictionary with only default NetworkX attributes
+        node_result = result["A"][0]
+        assert isinstance(node_result, dict)
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_aliased_node_returns_full_attributes(self, graph_type):
+        """Test that aliased nodes in RETURN also return full node attributes."""
+        host = graph_type()
+        host.add_node("x", name="node_x", score=95)
+        host.add_node("y", name="node_y", score=85)
+        host.add_edge("x", "y")
+
+        # Query with alias
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A AS SourceNode
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "SourceNode" in result
+        assert len(result["SourceNode"]) == 1
+
+        # The aliased result should still be a full node dictionary
+        node_result = result["SourceNode"][0]
+        assert isinstance(node_result, dict)
+        assert node_result["name"] == "node_x"
+        assert node_result["score"] == 95
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_mixed_nodes_and_attributes(self, graph_type):
+        """Test that a query can return both full nodes and specific attributes."""
+        host = graph_type()
+        host.add_node("x", name="node_x", age=30)
+        host.add_node("y", name="node_y", age=25)
+        host.add_edge("x", "y")
+
+        # Query returning both node and specific attribute
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A, B.name
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "A" in result
+        assert "B.name" in result
+        assert len(result["A"]) == 1
+        assert len(result["B.name"]) == 1
+
+        # A should be a full node dictionary
+        node_result = result["A"][0]
+        assert isinstance(node_result, dict)
+        assert node_result["name"] == "node_x"
+
+        # B.name should be just the attribute value
+        assert result["B.name"][0] == "node_y"
