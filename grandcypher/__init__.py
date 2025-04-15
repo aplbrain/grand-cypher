@@ -336,9 +336,9 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
 
 def and_(cond_a, cond_b) -> CONDITION:
-    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_endges)
-        condition_b, where_b = cond_b(match, host, return_endges)
+    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = cond_a(match, host, return_edges)
+        condition_b, where_b = cond_b(match, host, return_edges)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
@@ -346,9 +346,9 @@ def and_(cond_a, cond_b) -> CONDITION:
 
 
 def or_(cond_a, cond_b):
-    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_endges)
-        condition_b, where_b = cond_b(match, host, return_endges)
+    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = cond_a(match, host, return_edges)
+        condition_b, where_b = cond_b(match, host, return_edges)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
@@ -357,14 +357,14 @@ def or_(cond_a, cond_b):
 
 def cond_(should_be, entity_id, operator, value) -> CONDITION:
     def inner(
-        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_endges: list
+        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_edges: list
     ) -> bool:
         host_entity_id = entity_id.split(".")
         if host_entity_id[0] in match:
             host_entity_id[0] = match[host_entity_id[0]]
-        elif host_entity_id[0] in return_endges:
+        elif host_entity_id[0] in return_edges:
             # looking for edge...
-            edge_mapping = return_endges[host_entity_id[0]]
+            edge_mapping = return_edges[host_entity_id[0]]
             host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
         else:
             raise IndexError(f"Entity {host_entity_id} not in graph.")
@@ -457,17 +457,27 @@ class _GrandCypherTransformer(Transformer):
 
         motif_nodes = self._motif.nodes()
 
+        # Get true matches FIRST, before processing data paths
+        true_matches = self._get_true_matches()
+
+        result = {}
         for data_path in data_paths:
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
+            # Special handling for ID function
+            if entity_name.startswith("ID(") and entity_name.endswith(")"):
+                # Extract the original entity name
+                original_entity = entity_name[3:-1]
+                if original_entity in motif_nodes:
+                    # Return the node ID directly instead of the node attributes
+                    ret = (mapping[0][original_entity] for mapping, _ in true_matches)
+                    result[data_path] = list(ret)[offset_limit]
+                    continue
             if (
                 entity_name not in motif_nodes
                 and entity_name not in self._return_edges
                 and entity_name not in self._paths
             ):
                 raise NotImplementedError(f"Unknown entity name: {data_path}")
-
-        result = {}
-        true_matches = self._get_true_matches()
 
         for data_path in data_paths:
             entity_name, entity_attribute = _data_path_to_entity_name_attribute(
@@ -1212,7 +1222,11 @@ class _GrandCypherTransformer(Transformer):
     NUMBER = v_args(inline=True)(eval)
 
     def id_function(self, entity_id):
-        return entity_id[0].value
+        entity_name = entity_id[0].value
+        # Add this special entity name to return requests
+        self._return_requests.append(entity_name)
+        # Return a special identifier that will be processed in _lookup method
+        return f"ID({entity_name})"
 
     def value_list(self, items):
         return list(items)
