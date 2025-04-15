@@ -8,6 +8,7 @@ ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
 
 
 class TestHints:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_no_hints(self, graph_type):
         host = graph_type()
@@ -30,6 +31,7 @@ class TestHints:
         res = gc.run(qry)
         assert res == {"A.name": ["Arthur Dent"]}
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_hint_same_as_full_results(self, graph_type):
         host = graph_type()
@@ -90,6 +92,7 @@ class TestHints:
         res = gc.run(qry, hints=hints)
         assert all(r == 1 for r in res["A"])
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_multiple_nodes_hinted(self, graph_type):
         """
