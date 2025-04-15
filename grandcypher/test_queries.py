@@ -8,6 +8,41 @@ ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
 
 
 class TestWorking:
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_structural_match(self, graph_type):
+        tree = _GrandCypherGrammar.parse(
+            """
+        MATCH (A)-[B]->(C)
+        RETURN A
+        """
+        )
+        host = graph_type()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        gct = _GrandCypherTransformer(host)
+        gct.transform(tree)
+        assert len(gct._get_true_matches()) == 2
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_simple_structural_match_returns_nodes(self, graph_type):
+        tree = _GrandCypherGrammar.parse(
+            """
+        MATCH (A)-[B]->(C)
+        RETURN A
+        """
+        )
+        host = graph_type()
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+        gct = _GrandCypherTransformer(host)
+        gct.transform(tree)
+        returns = gct.returns()
+        assert "A" in returns
+        assert len(returns["A"]) == 2
+
+
+class TestWorking:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_structural_match_returns_node_attributes(self, graph_type):
         tree = _GrandCypherGrammar.parse(
@@ -59,6 +94,7 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 3
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_api_single_node_where(self, graph_type):
         host = graph_type()
@@ -75,6 +111,7 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["A"]) == 1
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_api_single_node_multi_where(self, graph_type):
         host = graph_type()
@@ -125,6 +162,7 @@ class TestSimpleAPI:
         """
         assert len(GrandCypher(host).run(qry)["A.foo"]) == 2
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_api_multi_node_multi_where(self, graph_type):
         host = graph_type()
@@ -238,6 +276,7 @@ class TestSimpleAPI:
 
         assert len(GrandCypher(host).run(qry)["AB"]) == 1
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_api_two_edge_where_clauses_diff_edge(self, graph_type):
         host = graph_type()
@@ -256,6 +295,7 @@ class TestSimpleAPI:
 
 
 class TestKarate:
+    @pytest.mark.benchmark
     def test_simple_multi_edge(self):
         qry = """
         MATCH (A)-[]->(B)
@@ -267,6 +307,7 @@ class TestKarate:
 
 
 class TestDictAttributes:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_node_dict(self, graph_type):
         qry = """
@@ -297,6 +338,7 @@ class TestDictAttributes:
 
 
 class TestLimitSkip:
+    @pytest.mark.benchmark
     def test_limit_only(self):
         qry = """
         MATCH (A)-[]->(B)
@@ -307,6 +349,7 @@ class TestLimitSkip:
         """
         assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 10
 
+    @pytest.mark.benchmark
     def test_skip_only(self):
         qry = """
         MATCH (A)-[]->(B)
@@ -317,6 +360,7 @@ class TestLimitSkip:
         """
         assert len(GrandCypher(nx.karate_club_graph()).run(qry)["A.club"]) == 544 - 10
 
+    @pytest.mark.benchmark
     def test_skip_and_limit(self):
         base_qry_for_comparison = """
         MATCH (A)-[]->(B)
@@ -378,6 +422,7 @@ class TestLimitSkip:
 
         assert len(GrandCypher(host).run(qry)["c"]) == 1
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_left_or_right_direction_with_where(self, graph_type):
         host = graph_type()
@@ -522,6 +567,7 @@ class TestLimitSkip:
         assert res["B.name"] == ["y"]
         assert res["C.name"] == ["z"]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_undirected(self, graph_type):
         host = graph_type()
@@ -586,6 +632,7 @@ class TestLimitSkip:
 
 
 class TestDistinct:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_basic_distinct1(self, graph_type):
         host = graph_type()
@@ -601,6 +648,7 @@ class TestDistinct:
         assert len(res["n.name"]) == 2  # should return "Alice" and "Bob" only once
         assert "Alice" in res["n.name"] and "Bob" in res["n.name"]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_basic_distinct2(self, graph_type):
         host = graph_type()
@@ -624,6 +672,7 @@ class TestDistinct:
             and "Greg" in res["n.name"]
         )
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_distinct_with_relationships(self, graph_type):
         host = graph_type()
@@ -656,6 +705,7 @@ class TestDistinct:
         assert len(res["n.name"]) == 1  # only one name should be returned
         assert res["n.name"] == ["Bob"]  # assuming alphabetical order
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_distinct_on_complex_graph(self, graph_type):
         host = graph_type()
@@ -684,6 +734,7 @@ class TestDistinct:
             len(res["m.name"]) == 3
         )  # should account for paths without considering duplicate names
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_distinct_with_attributes(self, graph_type):
         host = graph_type()
@@ -702,6 +753,7 @@ class TestDistinct:
 
 
 class TestOrderBy:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_single_field_ascending(self, graph_type):
         host = graph_type()
@@ -747,6 +799,7 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Carol", "Alice", "Bob"]
 
+    @pytest.mark.benchmark
     def test_order_by_edge_attribute1(self):
         host = nx.DiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -775,6 +828,7 @@ class TestOrderBy:
         assert res["n.name"] == ["Bob", "Alice", "Alice"]
         assert res["r.value"] == [{(0, "paid"): 14}, {(0, "paid"): 9}, {(0, "paid"): 4}]
 
+    @pytest.mark.benchmark
     def test_order_by_edge_attribute2(self):
         host = nx.DiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -802,6 +856,7 @@ class TestOrderBy:
         ]
         assert res["m.name"] == ["Alice", "Bob", "Carol", "Bob"]
 
+    @pytest.mark.benchmark
     def test_order_by_aggregation_function(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -867,6 +922,7 @@ class TestOrderBy:
         with pytest.raises(Exception):
             GrandCypher(host).run(qry)
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_multiple_fields(self, graph_type):
         host = graph_type()
@@ -884,6 +940,7 @@ class TestOrderBy:
         # names sorted in descending order where ages are the same
         assert res["n.name"] == ["Dave", "Carol", "Alice", "Bob"]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_with_limit(self, graph_type):
         host = graph_type()
@@ -899,6 +956,7 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Carol", "Alice"]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_with_skip(self, graph_type):
         host = graph_type()
@@ -914,6 +972,7 @@ class TestOrderBy:
         res = GrandCypher(host).run(qry)
         assert res["n.name"] == ["Alice", "Bob"]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_with_distinct(self, graph_type):
         host = graph_type()
@@ -951,6 +1010,7 @@ class TestOrderBy:
         with pytest.raises(Exception):
             res = GrandCypher(host).run(qry)
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_with_non_returned_field(self, graph_type):
         host = graph_type()
@@ -967,6 +1027,7 @@ class TestOrderBy:
 
 
 class TestMultigraphRelations:
+    @pytest.mark.benchmark
     def test_query_with_multiple_relations(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -1234,7 +1295,7 @@ class TestMultigraphRelations:
         ]
         assert res["m.name"] == ["Alice", "Bob", "Bob", "Carol"]
 
-    def test_order_by_edge_attribute1(self):
+    def test_order_by_edge_attribute3(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
@@ -1261,7 +1322,7 @@ class TestMultigraphRelations:
         assert res["n.name"] == ["Alice", "Bob"]
         assert res["r.value"] == [{(1, "paid"): 40, (0, "paid"): 9}, {(0, "paid"): 14}]
 
-    def test_order_by_edge_attribute2(self):
+    def test_order_by_edge_attribute4(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
         host.add_node("b", name="Bob", age=30)
@@ -1298,6 +1359,7 @@ class TestMultigraphRelations:
         ]
         assert res["m.name"] == ["Alice", "Bob", "Bob", "Carol"]
 
+    @pytest.mark.benchmark
     def test_multigraph_aggregation_function_sum(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -1370,6 +1432,7 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["MAX(r.amount)"] == [{"owes": 39}]
 
+    @pytest.mark.benchmark
     def test_multigraph_aggregation_function_count(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -1407,6 +1470,7 @@ class TestMultigraphRelations:
 
 
 class TestAlias:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_alias_with_single_variable_length_relationship(self, graph_type):
         host = graph_type()
@@ -1444,6 +1508,7 @@ class TestAlias:
             [{0: {"bar": "3"}}],
         ]
 
+    @pytest.mark.benchmark
     def test_alias_with_order_by(self):
         host = nx.MultiDiGraph()
         host.add_node("a", name="Alice", age=25)
@@ -1484,6 +1549,7 @@ class TestAlias:
 
 
 class TestVariableLengthRelationship:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_single_variable_length_relationship(self, graph_type):
         host = graph_type()
@@ -1537,6 +1603,7 @@ class TestVariableLengthRelationship:
             [{0: {"bar": "3"}}, {0: {"bar": "1"}}],
         ]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_complex_variable_length_relationship(self, graph_type):
         host = graph_type()
@@ -1746,6 +1813,7 @@ class TestType:
         assert res["A"] == ["y"]
         assert res["B"] == ["z"]
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_node_type_edge_hop(self, graph_type):
         host = graph_type()
@@ -1788,6 +1856,7 @@ class TestType:
 
 
 class TestSpecialCases:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_two_edge_hop_with_edge_node_type(self, graph_type):
         host = graph_type()
@@ -1949,6 +2018,7 @@ class TestComments:
 
 
 class TestStringOperators:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_starts_with(self, graph_type):
         host = graph_type()
@@ -1965,6 +2035,7 @@ class TestStringOperators:
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_ends_with(self, graph_type):
         host = graph_type()
@@ -1990,6 +2061,7 @@ class TestStringOperators:
         res = GrandCypher(host).run(qry)
         assert len(res["A"]) == 2
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_contains(self, graph_type):
         host = graph_type()
@@ -2017,6 +2089,7 @@ class TestStringOperators:
 
 
 class TestNot:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_not(self, graph_type):
         host = graph_type()
@@ -2033,6 +2106,7 @@ class TestNot:
         res = GrandCypher(host).run(qry)
         assert len(res["A"]) == 1
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_doublenot(self, graph_type):
         host = graph_type()
@@ -2049,6 +2123,7 @@ class TestNot:
         res = GrandCypher(host).run(qry)
         assert len(res["A"]) == 1
 
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_nested_nots_in_statements(self, graph_type):
         host = graph_type()
@@ -2082,6 +2157,7 @@ class TestNot:
 
 
 class TestPath:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_path(self, graph_type):
         host = graph_type()
@@ -2106,6 +2182,7 @@ class TestPath:
 
 
 class TestMatchWithOrOperatorInRelationships:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_match_with_single_or_operator(self, graph_type):
         host = graph_type()
@@ -2217,6 +2294,7 @@ class TestFunction:
 
 
 class TestList:
+    @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_in(self, graph_type):
         host = graph_type()
