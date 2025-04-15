@@ -812,12 +812,18 @@ class _GrandCypherTransformer(Transformer):
                         # sort within each edge first
                         sorted_sublists = []
                         for sublist in sort_list:
-                            sorted_sublist = sorted(
-                                sublist.items(),
-                                key=lambda x: x[1] or 0,  # 0 if `None`
+                            # Create a new sorted dictionary directly
+                            sorted_dict = {}
+                            # Get keys sorted by their values
+                            sorted_keys = sorted(
+                                sublist.keys(),
+                                key=lambda k: sublist[k] or 0,  # 0 if `None`
                                 reverse=(direction == "DESC"),
                             )
-                            sorted_sublists.append({k: v for k, v in sorted_sublist})
+                            # Insert keys in sorted order
+                            for k in sorted_keys:
+                                sorted_dict[k] = sublist[k]
+                            sorted_sublists.append(sorted_dict)
                         sort_list = sorted_sublists
 
                         # then sort the indices based on the sorted sublists
