@@ -1505,24 +1505,24 @@ class TestVariableLengthRelationship:
 
         qry = """
         MATCH (A)-[r*0]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["x", "y", "z"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["x", "y", "z"]
         assert res["r"] == [[None], [None], [None]]
 
         qry = """
         MATCH (A)-[r*1]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [{0: {"bar": "1"}}],
@@ -1532,13 +1532,13 @@ class TestVariableLengthRelationship:
 
         qry = """
         MATCH (A)-[r*2]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["z", "x", "y"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [{0: {"bar": "1"}}, {0: {"bar": "2"}}],
@@ -1559,13 +1559,13 @@ class TestVariableLengthRelationship:
 
         qry = """
         MATCH (A)-[r*0..2]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
-        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["ID(A)"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["ID(B)"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [None],
@@ -1613,34 +1613,34 @@ class TestType:
 
         qry = """
         MATCH (A)-[:XY]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x"]
-        assert res["B"] == ["y"]
+        assert res["ID(A)"] == ["x"]
+        assert res["ID(B)"] == ["y"]
 
         qry = """
         MATCH (A)-[:Edge]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
 
         qry = """
         MATCH (A)-[r:Edge]->(B)
         where r.bar == "2"
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["y"]
-        assert res["B"] == ["z"]
+        assert res["ID(A)"] == ["y"]
+        assert res["ID(B)"] == ["z"]
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_edge_type_hop(self, graph_type):
@@ -1654,34 +1654,34 @@ class TestType:
 
         qry = """
         MATCH (A)-[:XY*2]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == []
-        assert res["B"] == []
+        assert res["ID(A)"] == []
+        assert res["ID(B)"] == []
 
         qry = """
         MATCH (A)-[:XY*0..2]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y", "z", "x"]
-        assert res["B"] == ["x", "y", "z", "y"]
+        assert res["ID(A)"] == ["x", "y", "z", "x"]
+        assert res["ID(B)"] == ["x", "y", "z", "y"]
 
         qry = """
         MATCH (A)-[r:Edge*0..2]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
 
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
-        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["ID(A)"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["ID(B)"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [None],
