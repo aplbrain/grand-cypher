@@ -1426,7 +1426,7 @@ class TestAlias:
 
         qry = """
         MATCH (A)-[r*0]->(B)
-        RETURN A AS ayy, B AS bee, r
+        RETURN ID(A) AS ayy, ID(B) AS bee, r
         """
 
         res = GrandCypher(host).run(qry)
@@ -2228,12 +2228,12 @@ class TestFunction:
 
         qry = """
         MATCH (A)
-        WHERE id(A) == 1 OR id(A) == 2
-        RETURN id(A)
+        WHERE ID(A) == 1 OR ID(A) == 2
+        RETURN ID(A)
         """
 
         res = GrandCypher(host).run(qry)
-        assert res["A"] == [1, 2]
+        assert res["ID(A)"] == [1, 2]
 
 
 class TestList:
