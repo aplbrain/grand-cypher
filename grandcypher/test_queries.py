@@ -6,7 +6,6 @@ from . import GrandCypher
 ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
 
 
-
 class TestSimpleAPI:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_simple_api(self, graph_type):
@@ -156,19 +155,19 @@ class TestSimpleAPI:
 
         qry = """
         MATCH () -[]-> (B)
-        RETURN B
+        RETURN ID(B)
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
-        assert list(res.values())[0] == ["y", "z", "z"]
+        assert list(res.values())[0] == [2, 3, 3]
 
         qry = """
         MATCH () <-[]- (B)
-        RETURN B
+        RETURN ID(B)
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
-        assert list(res.values())[0] == ["x", "x", "y"]
+        assert list(res.values())[0] == [2, 3, 3]
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_single_edge_where(self, graph_type):
@@ -571,8 +570,8 @@ class TestLimitSkip:
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y"]
-        assert res["B"] == ["y", "z"]
+        assert res["A"] == [{"foo": 12}, {"foo": 13}]
+        assert res["B"] == [{"foo": 13}, {"foo": 16}]
 
 
 class TestDistinct:
@@ -1728,34 +1727,34 @@ class TestType:
 
         qry = """
         MATCH (A)-->(B:Node)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
 
         qry = """
         MATCH (A:Node)-->(B:X)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["z"]
-        assert res["B"] == ["x"]
+        assert res["ID(A)"] == ["z"]
+        assert res["ID(B)"] == ["x"]
 
         qry = """
         MATCH (A:Node)-->(B)
         where A.foo == "2"
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["y"]
-        assert res["B"] == ["z"]
+        assert res["ID(A)"] == ["y"]
+        assert res["ID(B)"] == ["z"]
 
     @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
@@ -1769,34 +1768,34 @@ class TestType:
 
         qry = """
         MATCH (A:Node)-[*0..1]->(B:X)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x"]
-        assert res["B"] == ["x"]
+        assert res["ID(A)"] == ["x"]
+        assert res["ID(B)"] == ["x"]
 
         qry = """
         MATCH (A:Node)-[*0..2]->(B{foo:"2"})
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["y", "x"]
-        assert res["B"] == ["y", "y"]
+        assert res["ID(A)"] == ["y", "x"]
+        assert res["ID(B)"] == ["y", "y"]
 
         qry = """
         MATCH (A:X)-[*0..2]->(B)
         where B.foo == "1" or B.foo == "3"
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "x"]
-        assert res["B"] == ["x", "z"]
+        assert res["ID(A)"] == ["x", "x"]
+        assert res["ID(B)"] == ["x", "z"]
 
 
 class TestSpecialCases:
@@ -2250,12 +2249,12 @@ class TestList:
 
         qry = """
         MATCH (A)
-        WHERE id(A) IN [1, 3]
-        RETURN A
+        WHERE ID(A) IN [1, 3]
+        RETURN ID(A)
         """
 
         res = GrandCypher(host).run(qry)
-        assert res["A"] == [1, 3]
+        assert res["ID(A)"] == [1, 3]
 
 
 class TestReuse:
@@ -2270,17 +2269,15 @@ class TestReuse:
 
         qry = """
         MATCH (A)
-        WHERE id(A) IN [1, 3]
-        RETURN A
+        WHERE ID(A) IN [1, 3]
+        RETURN ID(A)
         """
 
         gc = GrandCypher(host)
         res = gc.run(qry)
-        assert res["A"] == [1, 3]
+        assert res["ID(A)"] == [1, 3]
         res = gc.run(qry)
-        assert res["A"] == [1, 3]
-
-
+        assert res["ID(A)"] == [1, 3]
 
 
 class TestReturnFullNodeAttributes:
@@ -2411,7 +2408,11 @@ class TestReturnFullNodeAttributes:
 
         # A should be a full node dictionary
         node_result = result["A"][0]
-        assert isinstance(node_result, dict)
+        assert isinstance(node_result, dict), (
+            "Expected A to be a full node dictionary but got {}".format(
+                type(node_result)
+            )
+        )
         assert node_result["name"] == "node_x"
 
         # B.name should be just the attribute value

@@ -509,15 +509,20 @@ class _GrandCypherTransformer(Transformer):
             if entity_name in motif_nodes:
                 # We are looking for a node mapping in the target graph:
 
-                ret = (mapping[0][entity_name] for mapping, _ in true_matches)
-                # by default, just return the node from the host graph
-
                 if entity_attribute:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
                     ret = (
-                        self._target_graph.nodes[node].get(entity_attribute, None)
-                        for node in ret
+                        self._target_graph.nodes[mapping[0][entity_name]].get(
+                            entity_attribute, None
+                        )
+                        for mapping, _ in true_matches
+                    )
+                else:
+                    # Return the full node dictionary with all attributes
+                    ret = (
+                        self._target_graph.nodes[mapping[0][entity_name]]
+                        for mapping, _ in true_matches
                     )
 
             elif entity_name in self._paths:
