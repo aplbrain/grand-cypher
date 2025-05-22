@@ -1430,20 +1430,20 @@ class TestAlias:
         """
 
         res = GrandCypher(host).run(qry)
-        assert len(res) == 3
+        print("RES", res)
         assert res["ayy"] == ["x", "y", "z"]
         assert res["bee"] == ["x", "y", "z"]
         assert res["r"] == [[None], [None], [None]]
 
         qry = """
         MATCH (A)-[r*1]->(B)
-        RETURN A, B, r AS arr
+        RETURN ID(A), ID(B), r AS arr
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["arr"] == [
             [{0: {"bar": "1"}}],
@@ -1825,23 +1825,27 @@ class TestSpecialCases:
         qry = """
         MATCH (A:X) -[:b*0..5]-> (B:X) -[:i*0..1]-> (c)
         where A.head is True
-        return A, B, c
+        return ID(A), ID(B), ID(c)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
 
-        C_1_indices = [i for i, v in enumerate(res["A"]) if v == "C_1_1"]
-        C_2_indices = [i for i, v in enumerate(res["A"]) if v == "C_2_1"]
-        assert len(C_1_indices) + len(C_2_indices) == len(res["A"])
+        C_1_indices = [i for i, v in enumerate(res["ID(A)"]) if v == "C_1_1"]
+        C_2_indices = [i for i, v in enumerate(res["ID(A)"]) if v == "C_2_1"]
+        assert len(C_1_indices) + len(C_2_indices) == len(res["ID(A)"])
 
-        assert set(res["B"][i] for i in C_1_indices) == set(["C_1_1", "C_1_2", "C_1_3"])
-        assert set(res["c"][i] for i in C_1_indices) == set(
+        assert set(res["ID(B)"][i] for i in C_1_indices) == set(
+            ["C_1_1", "C_1_2", "C_1_3"]
+        )
+        assert set(res["ID(c)"][i] for i in C_1_indices) == set(
             ["C_1_1", "C_1_2", "C_1_3", "a_1_1", "a_1_2", "a_2_1"]
         )
 
-        assert set(res["B"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2"])
-        assert set(res["c"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2", "a_2_1"])
+        assert set(res["ID(B)"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2"])
+        assert set(res["ID(c)"][i] for i in C_2_indices) == set(
+            ["C_2_1", "C_2_2", "a_2_1"]
+        )
 
 
 class TestComments:

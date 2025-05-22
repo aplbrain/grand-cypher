@@ -816,15 +816,16 @@ class _GrandCypherTransformer(Transformer):
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
+        self._return_requests = list(map(str, self._return_requests))
 
         # Only include keys that were asked for in `RETURN` in the final results
-        # print(f"self._return_requests: {self._original_return_requests}")
         results = {
-            key: values
+            self._entity2alias.get(key, key): values
             for key, values in results.items()
-            if self._alias2entity.get(key, key) in self._return_requests
-            and key in self._original_return_requests
+            if key in self._return_requests
+            or self._alias2entity.get(key, key) in self._return_requests
         }
+
         # HACK: convert to [None] if edge is None
         for key, values in results.items():
             parsed_values = []
@@ -1262,7 +1263,7 @@ class _GrandCypherTransformer(Transformer):
         entity_name = entity_id[0].value
         # Add the raw entity ID to the return requests as well
         # This ensures tests like test_id can still access res["A"]
-        self._return_requests.append(entity_name)
+        # self._return_requests.append(entity_name)
         # Return a special identifier that will be processed in _lookup method
         return f"ID({entity_name})"
 
