@@ -442,6 +442,7 @@ class _GrandCypherTransformer(Transformer):
         self._return_edges = {}
         self._aggregate_functions = []
         self._aggregation_attributes = set()
+        self._original_return_requests = set()
         self._distinct = False
         self._order_by = None
         self._order_by_attributes = set()
@@ -482,14 +483,20 @@ class _GrandCypherTransformer(Transformer):
         for data_path in data_paths:
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
             # Special handling for ID function
-            if entity_name.startswith("ID(") and entity_name.endswith(")"):
+            if entity_name.upper().startswith("ID(") and entity_name.endswith(")"):
                 # Extract the original entity name
                 original_entity = entity_name[3:-1]
                 if original_entity in motif_nodes:
                     # Return the node ID directly instead of the node attributes
-                    ret = (mapping[0][original_entity] for mapping, _ in true_matches)
-                    result[data_path] = list(ret)[offset_limit]
+                    ret = [mapping[0][original_entity] for mapping, _ in true_matches]
+                    result[data_path] = ret[offset_limit]
+                    result[original_entity] = ret[
+                        offset_limit
+                    ]  # Also store under original entity name
                     processed_paths.add(data_path)  # Mark as processed
+                    processed_paths.add(
+                        original_entity
+                    )  # Mark original also as processed
                     continue
             if (
                 entity_name not in motif_nodes
@@ -627,6 +634,7 @@ class _GrandCypherTransformer(Transformer):
                 else:
                     if not isinstance(item, str):
                         item = str(item.value)
+                    self._original_return_requests.add(item)
 
                     if alias:
                         self._entity2alias[item] = alias
@@ -810,10 +818,12 @@ class _GrandCypherTransformer(Transformer):
         results = self._apply_pagination(results, ignore_limit)
 
         # Only include keys that were asked for in `RETURN` in the final results
+        # print(f"self._return_requests: {self._original_return_requests}")
         results = {
             key: values
             for key, values in results.items()
             if self._alias2entity.get(key, key) in self._return_requests
+            and key in self._original_return_requests
         }
         # HACK: convert to [None] if edge is None
         for key, values in results.items():
@@ -1250,7 +1260,8 @@ class _GrandCypherTransformer(Transformer):
 
     def id_function(self, entity_id):
         entity_name = entity_id[0].value
-        # Add this special entity name to return requests
+        # Add the raw entity ID to the return requests as well
+        # This ensures tests like test_id can still access res["A"]
         self._return_requests.append(entity_name)
         # Return a special identifier that will be processed in _lookup method
         return f"ID({entity_name})"

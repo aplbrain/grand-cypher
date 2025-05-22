@@ -159,7 +159,7 @@ class TestSimpleAPI:
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
-        assert list(res.values())[0] == [2, 3, 3]
+        assert list(res.values())[0] == ["y", "z", "z"]
 
         qry = """
         MATCH () <-[]- (B)
@@ -167,7 +167,7 @@ class TestSimpleAPI:
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
-        assert list(res.values())[0] == [2, 3, 3]
+        assert list(res.values())[0] == ["x", "x", "y"]
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_single_edge_where(self, graph_type):
