@@ -39,7 +39,7 @@ jobs:
           uv venv
           source .venv/bin/activate
           uv pip install ruff pytest pytest-cov pytest-codspeed
-          if [ -f requirements.txt ]; then uv pip install -r requirements.txt; fi
+          uv pip install -e .
 
       - name: Lint with ruff
         run: |
