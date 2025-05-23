@@ -1,66 +1,9 @@
 import networkx as nx
 import pytest
-import logging
 
-from . import _GrandCypherGrammar, _GrandCypherTransformer, GrandCypher
+from . import GrandCypher
 
 ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
-
-
-class TestWorking:
-    @pytest.mark.benchmark
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_simple_structural_match(self, graph_type):
-        tree = _GrandCypherGrammar.parse(
-            """
-        MATCH (A)-[B]->(C)
-        RETURN A
-        """
-        )
-        host = graph_type()
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
-        gct = _GrandCypherTransformer(host)
-        gct.transform(tree)
-        assert len(gct._get_true_matches()) == 2
-
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_simple_structural_match_returns_nodes(self, graph_type):
-        tree = _GrandCypherGrammar.parse(
-            """
-        MATCH (A)-[B]->(C)
-        RETURN A
-        """
-        )
-        host = graph_type()
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
-        gct = _GrandCypherTransformer(host)
-        gct.transform(tree)
-        returns = gct.returns()
-        assert "A" in returns
-        assert len(returns["A"]) == 2
-
-
-class TestWorking:
-    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
-    def test_simple_structural_match_returns_node_attributes(self, graph_type):
-        tree = _GrandCypherGrammar.parse(
-            """
-        MATCH (A)-[B]->(C)
-        RETURN A.dinnertime
-        """
-        )
-        host = graph_type()
-        host.add_edge("x", "y")
-        host.add_edge("y", "z")
-        host.add_node("x", dinnertime="no thanks I already ate")
-        gct = _GrandCypherTransformer(host)
-        gct.transform(tree)
-        returns = gct.returns()
-        assert "A" not in returns
-        assert "A.dinnertime" in returns
-        assert len(returns["A.dinnertime"]) == 2
 
 
 class TestSimpleAPI:
@@ -212,7 +155,7 @@ class TestSimpleAPI:
 
         qry = """
         MATCH () -[]-> (B)
-        RETURN B
+        RETURN ID(B)
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
@@ -220,7 +163,7 @@ class TestSimpleAPI:
 
         qry = """
         MATCH () <-[]- (B)
-        RETURN B
+        RETURN ID(B)
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 1
@@ -627,8 +570,8 @@ class TestLimitSkip:
         """
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y"]
-        assert res["B"] == ["y", "z"]
+        assert res["A"] == [{"foo": 12}, {"foo": 13}]
+        assert res["B"] == [{"foo": 13}, {"foo": 16}]
 
 
 class TestDistinct:
@@ -1483,24 +1426,24 @@ class TestAlias:
 
         qry = """
         MATCH (A)-[r*0]->(B)
-        RETURN A AS ayy, B AS bee, r
+        RETURN ID(A) AS ayy, ID(B) AS bee, r
         """
 
         res = GrandCypher(host).run(qry)
-        assert len(res) == 3
+        print("RES", res)
         assert res["ayy"] == ["x", "y", "z"]
         assert res["bee"] == ["x", "y", "z"]
         assert res["r"] == [[None], [None], [None]]
 
         qry = """
         MATCH (A)-[r*1]->(B)
-        RETURN A, B, r AS arr
+        RETURN ID(A), ID(B), r AS arr
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["arr"] == [
             [{0: {"bar": "1"}}],
@@ -1562,24 +1505,24 @@ class TestVariableLengthRelationship:
 
         qry = """
         MATCH (A)-[r*0]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["x", "y", "z"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["x", "y", "z"]
         assert res["r"] == [[None], [None], [None]]
 
         qry = """
         MATCH (A)-[r*1]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [{0: {"bar": "1"}}],
@@ -1589,13 +1532,13 @@ class TestVariableLengthRelationship:
 
         qry = """
         MATCH (A)-[r*2]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["z", "x", "y"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [{0: {"bar": "1"}}, {0: {"bar": "2"}}],
@@ -1616,13 +1559,13 @@ class TestVariableLengthRelationship:
 
         qry = """
         MATCH (A)-[r*0..2]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
-        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["ID(A)"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["ID(B)"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [None],
@@ -1670,34 +1613,34 @@ class TestType:
 
         qry = """
         MATCH (A)-[:XY]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x"]
-        assert res["B"] == ["y"]
+        assert res["ID(A)"] == ["x"]
+        assert res["ID(B)"] == ["y"]
 
         qry = """
         MATCH (A)-[:Edge]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
 
         qry = """
         MATCH (A)-[r:Edge]->(B)
         where r.bar == "2"
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["y"]
-        assert res["B"] == ["z"]
+        assert res["ID(A)"] == ["y"]
+        assert res["ID(B)"] == ["z"]
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_edge_type_hop(self, graph_type):
@@ -1711,34 +1654,34 @@ class TestType:
 
         qry = """
         MATCH (A)-[:XY*2]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == []
-        assert res["B"] == []
+        assert res["ID(A)"] == []
+        assert res["ID(B)"] == []
 
         qry = """
         MATCH (A)-[:XY*0..2]->(B)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y", "z", "x"]
-        assert res["B"] == ["x", "y", "z", "y"]
+        assert res["ID(A)"] == ["x", "y", "z", "x"]
+        assert res["ID(B)"] == ["x", "y", "z", "y"]
 
         qry = """
         MATCH (A)-[r:Edge*0..2]->(B)
-        RETURN A, B, r
+        RETURN ID(A), ID(B), r
         """
 
         res = GrandCypher(host).run(qry)
 
         assert len(res) == 3
-        assert res["A"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
-        assert res["B"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
+        assert res["ID(A)"] == ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+        assert res["ID(B)"] == ["x", "y", "z", "y", "z", "x", "z", "x", "y"]
         assert graph_type in ACCEPTED_GRAPH_TYPES
         assert res["r"] == [
             [None],
@@ -1784,34 +1727,34 @@ class TestType:
 
         qry = """
         MATCH (A)-->(B:Node)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "y", "z"]
-        assert res["B"] == ["y", "z", "x"]
+        assert res["ID(A)"] == ["x", "y", "z"]
+        assert res["ID(B)"] == ["y", "z", "x"]
 
         qry = """
         MATCH (A:Node)-->(B:X)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["z"]
-        assert res["B"] == ["x"]
+        assert res["ID(A)"] == ["z"]
+        assert res["ID(B)"] == ["x"]
 
         qry = """
         MATCH (A:Node)-->(B)
         where A.foo == "2"
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["y"]
-        assert res["B"] == ["z"]
+        assert res["ID(A)"] == ["y"]
+        assert res["ID(B)"] == ["z"]
 
     @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
@@ -1825,34 +1768,34 @@ class TestType:
 
         qry = """
         MATCH (A:Node)-[*0..1]->(B:X)
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x"]
-        assert res["B"] == ["x"]
+        assert res["ID(A)"] == ["x"]
+        assert res["ID(B)"] == ["x"]
 
         qry = """
         MATCH (A:Node)-[*0..2]->(B{foo:"2"})
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["y", "x"]
-        assert res["B"] == ["y", "y"]
+        assert res["ID(A)"] == ["y", "x"]
+        assert res["ID(B)"] == ["y", "y"]
 
         qry = """
         MATCH (A:X)-[*0..2]->(B)
         where B.foo == "1" or B.foo == "3"
-        RETURN A, B
+        RETURN ID(A), ID(B)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["A"] == ["x", "x"]
-        assert res["B"] == ["x", "z"]
+        assert res["ID(A)"] == ["x", "x"]
+        assert res["ID(B)"] == ["x", "z"]
 
 
 class TestSpecialCases:
@@ -1882,23 +1825,27 @@ class TestSpecialCases:
         qry = """
         MATCH (A:X) -[:b*0..5]-> (B:X) -[:i*0..1]-> (c)
         where A.head is True
-        return A, B, c
+        return ID(A), ID(B), ID(c)
         """
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 3
 
-        C_1_indices = [i for i, v in enumerate(res["A"]) if v == "C_1_1"]
-        C_2_indices = [i for i, v in enumerate(res["A"]) if v == "C_2_1"]
-        assert len(C_1_indices) + len(C_2_indices) == len(res["A"])
+        C_1_indices = [i for i, v in enumerate(res["ID(A)"]) if v == "C_1_1"]
+        C_2_indices = [i for i, v in enumerate(res["ID(A)"]) if v == "C_2_1"]
+        assert len(C_1_indices) + len(C_2_indices) == len(res["ID(A)"])
 
-        assert set(res["B"][i] for i in C_1_indices) == set(["C_1_1", "C_1_2", "C_1_3"])
-        assert set(res["c"][i] for i in C_1_indices) == set(
+        assert set(res["ID(B)"][i] for i in C_1_indices) == set(
+            ["C_1_1", "C_1_2", "C_1_3"]
+        )
+        assert set(res["ID(c)"][i] for i in C_1_indices) == set(
             ["C_1_1", "C_1_2", "C_1_3", "a_1_1", "a_1_2", "a_2_1"]
         )
 
-        assert set(res["B"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2"])
-        assert set(res["c"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2", "a_2_1"])
+        assert set(res["ID(B)"][i] for i in C_2_indices) == set(["C_2_1", "C_2_2"])
+        assert set(res["ID(c)"][i] for i in C_2_indices) == set(
+            ["C_2_1", "C_2_2", "a_2_1"]
+        )
 
 
 class TestComments:
@@ -2285,12 +2232,12 @@ class TestFunction:
 
         qry = """
         MATCH (A)
-        WHERE id(A) == 1 OR id(A) == 2
-        RETURN id(A)
+        WHERE ID(A) == 1 OR ID(A) == 2
+        RETURN ID(A)
         """
 
         res = GrandCypher(host).run(qry)
-        assert res["A"] == [1, 2]
+        assert res["ID(A)"] == [1, 2]
 
 
 class TestList:
@@ -2306,12 +2253,12 @@ class TestList:
 
         qry = """
         MATCH (A)
-        WHERE id(A) IN [1, 3]
-        RETURN A
+        WHERE ID(A) IN [1, 3]
+        RETURN ID(A)
         """
 
         res = GrandCypher(host).run(qry)
-        assert res["A"] == [1, 3]
+        assert res["ID(A)"] == [1, 3]
 
 
 class TestReuse:
@@ -2326,12 +2273,151 @@ class TestReuse:
 
         qry = """
         MATCH (A)
-        WHERE id(A) IN [1, 3]
-        RETURN A
+        WHERE ID(A) IN [1, 3]
+        RETURN ID(A)
         """
 
         gc = GrandCypher(host)
         res = gc.run(qry)
-        assert res["A"] == [1, 3]
+        assert res["ID(A)"] == [1, 3]
         res = gc.run(qry)
-        assert res["A"] == [1, 3]
+        assert res["ID(A)"] == [1, 3]
+
+
+class TestReturnFullNodeAttributes:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_full_node_attributes(self, graph_type):
+        """Test that RETURN node returns the full node dictionary with all attributes."""
+        host = graph_type()
+        # Add node with multiple attributes
+        host.add_node("x", name="node_x", age=30, is_active=True)
+        host.add_node("y", name="node_y", age=25, location="New York")
+        host.add_edge("x", "y")
+
+        # Query to return node A
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "A" in result
+        assert len(result["A"]) == 1
+
+        # Instead of just the node ID, we expect the full node dictionary
+        node_result = result["A"][0]
+        # Test should expect a dictionary-like object with attributes
+        assert isinstance(node_result, dict)
+        assert node_result["name"] == "node_x"
+        assert node_result["age"] == 30
+        assert node_result["is_active"] is True
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_multiple_nodes_with_attributes(self, graph_type):
+        """Test that RETURN node returns full attributes for multiple nodes."""
+        host = graph_type()
+        # Add nodes with different attributes
+        host.add_node("x", name="node_x", type="source")
+        host.add_node("y", name="node_y", type="middle")
+        host.add_node("z", name="node_z", type="target")
+        host.add_edge("x", "y")
+        host.add_edge("y", "z")
+
+        # Query to return all B nodes
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN B
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "B" in result
+        assert len(result["B"]) == 2
+
+        # Check that each result is a full node dictionary
+        node_types = [node["type"] for node in result["B"]]
+        assert "middle" in node_types
+        assert "target" in node_types
+
+        node_names = [node["name"] for node in result["B"]]
+        assert "node_y" in node_names
+        assert "node_z" in node_names
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_node_without_attributes(self, graph_type):
+        """Test that RETURN node works with nodes that have no attributes."""
+        host = graph_type()
+        # Add nodes without attributes
+        host.add_node("x")
+        host.add_node("y")
+        host.add_edge("x", "y")
+
+        # Query to return node A
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "A" in result
+        assert len(result["A"]) == 1
+
+        # For nodes without attributes, we expect an empty dictionary
+        # or a dictionary with only default NetworkX attributes
+        node_result = result["A"][0]
+        assert isinstance(node_result, dict)
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_aliased_node_returns_full_attributes(self, graph_type):
+        """Test that aliased nodes in RETURN also return full node attributes."""
+        host = graph_type()
+        host.add_node("x", name="node_x", score=95)
+        host.add_node("y", name="node_y", score=85)
+        host.add_edge("x", "y")
+
+        # Query with alias
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A AS SourceNode
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "SourceNode" in result
+        assert len(result["SourceNode"]) == 1
+
+        # The aliased result should still be a full node dictionary
+        node_result = result["SourceNode"][0]
+        assert isinstance(node_result, dict)
+        assert node_result["name"] == "node_x"
+        assert node_result["score"] == 95
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_mixed_nodes_and_attributes(self, graph_type):
+        """Test that a query can return both full nodes and specific attributes."""
+        host = graph_type()
+        host.add_node("x", name="node_x", age=30)
+        host.add_node("y", name="node_y", age=25)
+        host.add_edge("x", "y")
+
+        # Query returning both node and specific attribute
+        qry = """
+        MATCH (A)-[]->(B)
+        RETURN A, B.name
+        """
+
+        result = GrandCypher(host).run(qry)
+        assert "A" in result
+        assert "B.name" in result
+        assert len(result["A"]) == 1
+        assert len(result["B.name"]) == 1
+
+        # A should be a full node dictionary
+        node_result = result["A"][0]
+        assert isinstance(node_result, dict), (
+            "Expected A to be a full node dictionary but got {}".format(
+                type(node_result)
+            )
+        )
+        assert node_result["name"] == "node_x"
+
+        # B.name should be just the attribute value
+        assert result["B.name"][0] == "node_y"

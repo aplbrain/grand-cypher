@@ -1,5 +1,11 @@
 # CHANGELOG
 
+### **1.0.0** (May 23, 2025)
+
+#### Breaking Changes
+
+-   The `RETURN` clause on nodes now returns a list of dictionaries instead of a list of IDs. This is compatible with the actual Cypher spec, but breaks compatibility with the previous version. For more information, see #73 and #57.
+
 ### **0.14.0** (March 18 2025)
 
 #### Features

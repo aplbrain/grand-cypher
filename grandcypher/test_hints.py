@@ -87,10 +87,10 @@ class TestHints:
         hints = [{"A": 1}]
         gc = GrandCypher(host)
         qry = """
-        MATCH (A)-[r]->(B) RETURN A
+        MATCH (A)-[r]->(B) RETURN ID(A)
         """
         res = gc.run(qry, hints=hints)
-        assert all(r == 1 for r in res["A"])
+        assert all(r == 1 for r in res["ID(A)"])
 
     @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)

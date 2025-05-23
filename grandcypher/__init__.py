@@ -176,7 +176,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "0.14.0"
+__version__ = "1.0.0"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -303,8 +303,8 @@ def _get_entity_from_host(
             # and then return the attribute:
             return host.nodes[entity_name].get(entity_attribute, None)
         else:
-            # Otherwise, just return the node from the host graph
-            return entity_name
+            # Otherwise, just return the dict of attributes:
+            return host.nodes[entity_name]
     else:
         # looking for an edge:
         u, v = entity_name
@@ -336,9 +336,9 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
 
 def and_(cond_a, cond_b) -> CONDITION:
-    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_endges)
-        condition_b, where_b = cond_b(match, host, return_endges)
+    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = cond_a(match, host, return_edges)
+        condition_b, where_b = cond_b(match, host, return_edges)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
@@ -346,9 +346,9 @@ def and_(cond_a, cond_b) -> CONDITION:
 
 
 def or_(cond_a, cond_b):
-    def inner(match: dict, host: nx.DiGraph, return_endges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_endges)
-        condition_b, where_b = cond_b(match, host, return_endges)
+    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = cond_a(match, host, return_edges)
+        condition_b, where_b = cond_b(match, host, return_edges)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
@@ -357,35 +357,51 @@ def or_(cond_a, cond_b):
 
 def cond_(should_be, entity_id, operator, value) -> CONDITION:
     def inner(
-        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_endges: list
+        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_edges: list
     ) -> bool:
-        host_entity_id = entity_id.split(".")
-        if host_entity_id[0] in match:
-            host_entity_id[0] = match[host_entity_id[0]]
-        elif host_entity_id[0] in return_endges:
-            # looking for edge...
-            edge_mapping = return_endges[host_entity_id[0]]
-            host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
-        else:
-            raise IndexError(f"Entity {host_entity_id} not in graph.")
-
-        operator_results = []
-        if isinstance(host, nx.MultiDiGraph):
-            # if any of the relations between nodes satisfies condition, return True
-            r_vals = _get_entity_from_host(host, *host_entity_id)
-            r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
-            for r_val in r_vals:
+        # Check if this is an ID function call
+        if entity_id.startswith("ID(") and entity_id.endswith(")"):
+            # Extract the entity name from ID(entity_name)
+            actual_entity_name = entity_id[3:-1]  # Remove "ID(" and ")"
+            if actual_entity_name in match:
+                # Return the node ID directly
+                node_id = match[actual_entity_name]
                 try:
-                    operator_results.append(operator(r_val, value))
+                    val = operator(node_id, value)
                 except:
-                    operator_results.append(False)
-            val = any(operator_results)
+                    val = False
+                operator_results = [val]
+            else:
+                raise IndexError(f"Entity {actual_entity_name} not in match.")
         else:
-            try:
-                val = operator(_get_entity_from_host(host, *host_entity_id), value)
-            except:
-                val = False
-            operator_results.append(val)
+            # Regular entity attribute access
+            host_entity_id = entity_id.split(".")
+            if host_entity_id[0] in match:
+                host_entity_id[0] = match[host_entity_id[0]]
+            elif host_entity_id[0] in return_edges:
+                # looking for edge...
+                edge_mapping = return_edges[host_entity_id[0]]
+                host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
+            else:
+                raise IndexError(f"Entity {host_entity_id} not in graph.")
+
+            operator_results = []
+            if isinstance(host, nx.MultiDiGraph):
+                # if any of the relations between nodes satisfies condition, return True
+                r_vals = _get_entity_from_host(host, *host_entity_id)
+                r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
+                for r_val in r_vals:
+                    try:
+                        operator_results.append(operator(r_val, value))
+                    except:
+                        operator_results.append(False)
+                val = any(operator_results)
+            else:
+                try:
+                    val = operator(_get_entity_from_host(host, *host_entity_id), value)
+                except:
+                    val = False
+                operator_results.append(val)
 
         if val != should_be:
             return False, operator_results
@@ -426,6 +442,7 @@ class _GrandCypherTransformer(Transformer):
         self._return_edges = {}
         self._aggregate_functions = []
         self._aggregation_attributes = set()
+        self._original_return_requests = set()
         self._distinct = False
         self._order_by = None
         self._order_by_attributes = set()
@@ -457,8 +474,30 @@ class _GrandCypherTransformer(Transformer):
 
         motif_nodes = self._motif.nodes()
 
+        # Get true matches FIRST, before processing data paths
+        true_matches = self._get_true_matches()
+
+        result = {}
+        processed_paths = set()  # Keep track of processed paths
+
         for data_path in data_paths:
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
+            # Special handling for ID function
+            if entity_name.upper().startswith("ID(") and entity_name.endswith(")"):
+                # Extract the original entity name
+                original_entity = entity_name[3:-1]
+                if original_entity in motif_nodes:
+                    # Return the node ID directly instead of the node attributes
+                    ret = [mapping[0][original_entity] for mapping, _ in true_matches]
+                    result[data_path] = ret[offset_limit]
+                    result[original_entity] = ret[
+                        offset_limit
+                    ]  # Also store under original entity name
+                    processed_paths.add(data_path)  # Mark as processed
+                    processed_paths.add(
+                        original_entity
+                    )  # Mark original also as processed
+                    continue
             if (
                 entity_name not in motif_nodes
                 and entity_name not in self._return_edges
@@ -466,10 +505,10 @@ class _GrandCypherTransformer(Transformer):
             ):
                 raise NotImplementedError(f"Unknown entity name: {data_path}")
 
-        result = {}
-        true_matches = self._get_true_matches()
-
         for data_path in data_paths:
+            if data_path in processed_paths:  # Skip already processed paths
+                continue
+
             entity_name, entity_attribute = _data_path_to_entity_name_attribute(
                 data_path
             )
@@ -477,15 +516,20 @@ class _GrandCypherTransformer(Transformer):
             if entity_name in motif_nodes:
                 # We are looking for a node mapping in the target graph:
 
-                ret = (mapping[0][entity_name] for mapping, _ in true_matches)
-                # by default, just return the node from the host graph
-
                 if entity_attribute:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
                     ret = (
-                        self._target_graph.nodes[node].get(entity_attribute, None)
-                        for node in ret
+                        self._target_graph.nodes[mapping[0][entity_name]].get(
+                            entity_attribute, None
+                        )
+                        for mapping, _ in true_matches
+                    )
+                else:
+                    # Return the full node dictionary with all attributes
+                    ret = (
+                        self._target_graph.nodes[mapping[0][entity_name]]
+                        for mapping, _ in true_matches
                     )
 
             elif entity_name in self._paths:
@@ -590,6 +634,7 @@ class _GrandCypherTransformer(Transformer):
                 else:
                     if not isinstance(item, str):
                         item = str(item.value)
+                    self._original_return_requests.add(item)
 
                     if alias:
                         self._entity2alias[item] = alias
@@ -771,13 +816,16 @@ class _GrandCypherTransformer(Transformer):
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
+        self._return_requests = list(map(str, self._return_requests))
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
-            key: values
+            self._entity2alias.get(key, key): values
             for key, values in results.items()
-            if self._alias2entity.get(key, key) in self._return_requests
+            if key in self._return_requests
+            or self._alias2entity.get(key, key) in self._return_requests
         }
+
         # HACK: convert to [None] if edge is None
         for key, values in results.items():
             parsed_values = []
@@ -812,12 +860,18 @@ class _GrandCypherTransformer(Transformer):
                         # sort within each edge first
                         sorted_sublists = []
                         for sublist in sort_list:
-                            sorted_sublist = sorted(
-                                sublist.items(),
-                                key=lambda x: x[1] or 0,  # 0 if `None`
+                            # Create a new sorted dictionary directly
+                            sorted_dict = {}
+                            # Get keys sorted by their values
+                            sorted_keys = sorted(
+                                sublist.keys(),
+                                key=lambda k: sublist[k] or 0,  # 0 if `None`
                                 reverse=(direction == "DESC"),
                             )
-                            sorted_sublists.append({k: v for k, v in sorted_sublist})
+                            # Insert keys in sorted order
+                            for k in sorted_keys:
+                                sorted_dict[k] = sublist[k]
+                            sorted_sublists.append(sorted_dict)
                         sort_list = sorted_sublists
 
                         # then sort the indices based on the sorted sublists
@@ -845,9 +899,9 @@ class _GrandCypherTransformer(Transformer):
 
     def _apply_distinct(self, results):
         if self._order_by:
-            assert self._order_by_attributes.issubset(
-                self._return_requests
-            ), "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
+            assert self._order_by_attributes.issubset(self._return_requests), (
+                "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN"
+            )
 
         # ordered dict to maintain the first occurrence of each unique tuple based on return requests
         unique_rows = OrderedDict()
@@ -1206,7 +1260,12 @@ class _GrandCypherTransformer(Transformer):
     NUMBER = v_args(inline=True)(eval)
 
     def id_function(self, entity_id):
-        return entity_id[0].value
+        entity_name = entity_id[0].value
+        # Add the raw entity ID to the return requests as well
+        # This ensures tests like test_id can still access res["A"]
+        # self._return_requests.append(entity_name)
+        # Return a special identifier that will be processed in _lookup method
+        return f"ID({entity_name})"
 
     def value_list(self, items):
         return list(items)
