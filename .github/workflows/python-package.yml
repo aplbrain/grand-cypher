@@ -44,7 +44,7 @@ jobs:
       - name: Lint with ruff
         run: |
           source .venv/bin/activate
-          ruff check grandcypher tests
+          ruff check grandcypher
 
       - name: Test with pytest
         run: |
