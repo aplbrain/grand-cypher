@@ -1,0 +1,6 @@
+# .ruff.toml
+exclude = ["tests/fixtures", ".venv", "build", "dist"]
+
+[lint]
+select = ["E", "F", "W"]
+ignore = ["E731", "E501", "E722"]
