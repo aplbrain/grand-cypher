@@ -951,7 +951,7 @@ class TestOrderBy:
         """
         # Expect an error since 'n.age' is not included in the RETURN clause but used in ORDER BY
         with pytest.raises(Exception):
-            res = GrandCypher(host).run(qry)
+            GrandCypher(host).run(qry)
 
     @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
