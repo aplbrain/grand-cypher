@@ -30,14 +30,10 @@ jobs:
       - name: Set up uv venv and install dependencies
         run: |
           uv venv
-          source .venv/bin/activate
-          uv pip install pytest pytest-cov pytest-codspeed
-          uv pip install -e .
+          .venv/bin/uv pip install pytest pytest-cov pytest-codspeed
+          .venv/bin/uv pip install -e .
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v3
         with:
-          # token: ${{ secrets.CODSPEED_TOKEN }}
-          run: |
-            source .venv/bin/activate
-            pytest . --codspeed
+          run: .venv/bin/pytest . --codspeed
