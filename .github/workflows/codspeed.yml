@@ -10,21 +10,27 @@ on:
 jobs:
   benchmarks:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v3
 
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH  # Ensures uv is on PATH if installed via cargo
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Setup Python (just for tooling, uv handles env)
-        uses: actions/setup-python@v3
+      - name: Cache virtual environment
+        uses: actions/cache@v3
         with:
-          python-version: "3.13"
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            venv-${{ runner.os }}-
 
-      - name: Install dependencies with uv
+      - name: Set up uv venv and install dependencies
         run: |
+          uv venv
+          source .venv/bin/activate
           uv pip install pytest pytest-cov pytest-codspeed
           uv pip install -e .
 
@@ -32,4 +38,6 @@ jobs:
         uses: CodSpeedHQ/action@v3
         with:
           # token: ${{ secrets.CODSPEED_TOKEN }}
-          run: pytest . --codspeed
+          run: |
+            source .venv/bin/activate
+            pytest . --codspeed
