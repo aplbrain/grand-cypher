@@ -125,14 +125,23 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" type_list "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" ":" type_list "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" "*" "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" "*" ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" "*" MIN_HOP ".." "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME "*" ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP ".." "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" TYPE "*" ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP ".." "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP ".." "]-" RIGHT_ANGLE?
 
 value_list          : "[" [value ("," value)*] "]"
 type_list           : TYPE ( "|" TYPE )*
