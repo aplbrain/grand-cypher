@@ -1220,7 +1220,7 @@ class _GrandCypherTransformer(Transformer):
             minh = minh if minh is not None else 1
             maxh = maxh if maxh is not None else self._max_hop
             if maxh > self._max_hop:
-                raise ValueError(f"max hop is caped at {self._max_hop}, found {maxh}!")
+                raise ValueError(f"max hop is capped at {self._max_hop}, found {maxh}!")
             if t:
                 t = set([t] if type(t) is str else t)
             self._motif.add_edges_from(
