@@ -11,18 +11,12 @@ from typing import Dict, Hashable, List, Callable, Optional, Tuple, Union
 from collections import OrderedDict
 import random
 import string
-import logging
 from functools import lru_cache
 import networkx as nx
 
 import grandiso
 
 from lark import Lark, Transformer, v_args, Token, Tree
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
 
 _OPERATORS = {
