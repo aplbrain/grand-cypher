@@ -115,18 +115,23 @@ node_match          : "(" (CNAME)? (json_dict)? ")"
                     | "(" (CNAME)? ":" TYPE (json_dict)? ")"
 
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" type_list "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" type_list "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" edge_content? "]-" RIGHT_ANGLE?
+
+edge_content        : edge_name edge_type? hop_range?
+                    | edge_type hop_range?
+                    | hop_range
+
+edge_name           : CNAME
+
+edge_type           : ":" type_list
+                    | ":" TYPE
+
+hop_range           : "*" hop_spec?
+
+hop_spec            : MIN_HOP ".." MAX_HOP
+                    | MIN_HOP ".."
+                    | ".." MAX_HOP
+                    | MIN_HOP
 
 value_list          : "[" [value ("," value)*] "]"
 type_list           : TYPE ( "|" TYPE )*
@@ -1207,9 +1212,9 @@ class _GrandCypherTransformer(Transformer):
 
             ish = minh is None and maxh is None
             minh = minh if minh is not None else 1
-            maxh = maxh if maxh is not None else minh + 1
+            maxh = maxh if maxh is not None else self._max_hop
             if maxh > self._max_hop:
-                raise ValueError(f"max hop is caped at 100, found {maxh}!")
+                raise ValueError(f"max hop is capped at {self._max_hop}, found {maxh}!")
             if t:
                 t = set([t] if type(t) is str else t)
             self._motif.add_edges_from(
