@@ -19,6 +19,7 @@ import grandiso
 
 from lark import Lark, Transformer, v_args, Token, Tree
 
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
