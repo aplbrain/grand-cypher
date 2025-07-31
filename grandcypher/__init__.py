@@ -19,13 +19,6 @@ import grandiso
 from lark import Lark, Transformer, v_args, Token, Tree
 
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-
-
 _OPERATORS = {
     "=": lambda x, y: x == y,
     "==": lambda x, y: x == y,
