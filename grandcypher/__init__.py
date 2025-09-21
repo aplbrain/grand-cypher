@@ -35,8 +35,7 @@ _OPERATORS = {
     "ends_with": lambda x, y: x.endswith(y),
 }
 
-##TODO: verify node_match 3rd option for type_list works
-##TODO: verify edge_match for last option works
+
 _GrandCypherGrammar = Lark(
     r"""
 start               : query
@@ -113,7 +112,6 @@ order_direction     : "ASC"i -> asc
                     | CNAME "." CNAME
 
 node_match          : "(" (CNAME)? (json_dict)? ")"
-                    | "(" (CNAME)? ":" TYPE (json_dict)? ")"
                     | "(" (CNAME)? ":" type_list (json_dict)? ")"
 
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
@@ -125,10 +123,9 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" type_list "*" MIN_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" type_list "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" type_list "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME ":" type_list "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
 
 value_list          : "[" [value ("," value)*] "]"
@@ -1180,7 +1177,6 @@ class _GrandCypherTransformer(Transformer):
                     cname = item
                 elif item.type == "TYPE":
                     node_types = set([item.value])
-            ##TODO: Verify Additions
             elif isinstance(item,Tree):
                 if item.data.value =='type_list':
                     node_types=set([token.value for token in item.children])
