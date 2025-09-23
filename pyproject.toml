@@ -1,6 +1,6 @@
 [project]
 name = "grand-cypher"
-version = "1.0.0"
+version = "1.0.1"
 authors = [
     { name = "Jordan Matelsky", email = "opensource@matelsky.com" }
 ]

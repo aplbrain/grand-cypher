@@ -1,5 +1,11 @@
 # CHANGELOG
 
+### **1.0.1** (September 23, 2025)
+
+### Features
+
+-   Support for `|` operator in node labels (#79, thanks @ericnwrites!)
+
 ### **1.0.0** (May 23, 2025)
 
 #### Breaking Changes

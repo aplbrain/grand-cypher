@@ -170,7 +170,7 @@ COMMENT: "//" /[^\n]/*
     start="start",
 )
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 _ALPHABET = string.ascii_lowercase + string.digits
