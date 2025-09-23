@@ -2274,7 +2274,7 @@ class TestMatchWithOrOperatorInNodeLabels:
         res = GrandCypher(host).run(qry)
         assert sorted(res["n.name"]) == ["Dave", "Dave", "Eve"]
         assert sorted(res["m.name"]) == ["Apollo", "Database Setup", "Database Setup"]
-    
+
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_match_with_or_on_nodes_and_relationships(self, graph_type):
         host = graph_type()

@@ -1201,7 +1201,7 @@ class _GrandCypherTransformer(Transformer):
             # g (token) - representing variable name of relation
             # t (set) - representing relation labels (types)
             # d (str) - representing direction: r,l,b
-            # minh/maxh (int) - min/max hops 
+            # minh/maxh (int) - min/max hops
             ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[
                 start : start + 3
             ]
