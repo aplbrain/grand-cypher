@@ -112,7 +112,7 @@ order_direction     : "ASC"i -> asc
                     | CNAME "." CNAME
 
 node_match          : "(" (CNAME)? (json_dict)? ")"
-                    | "(" (CNAME)? ":" TYPE (json_dict)? ")"
+                    | "(" (CNAME)? ":" type_list (json_dict)? ")"
 
 edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[]-" RIGHT_ANGLE?
@@ -123,10 +123,10 @@ edge_match          : LEFT_ANGLE? "--" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP "]-" RIGHT_ANGLE?
                     | LEFT_ANGLE? "-[" CNAME "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP "]-" RIGHT_ANGLE?
-                    | LEFT_ANGLE? "-[" CNAME ":" TYPE "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" type_list "*" MIN_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" ":" type_list "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" type_list "*" MIN_HOP "]-" RIGHT_ANGLE?
+                    | LEFT_ANGLE? "-[" CNAME ":" type_list "*" MIN_HOP  ".." MAX_HOP "]-" RIGHT_ANGLE?
 
 value_list          : "[" [value ("," value)*] "]"
 type_list           : TYPE ( "|" TYPE )*
@@ -202,7 +202,8 @@ def _is_node_attr_match(
 
     for attr, val in motif_node.items():
         if attr == "__labels__":
-            if val and val - host_node.get("__labels__", set()):
+            host_types = host_node.get("__labels__", set())
+            if val and not val.intersection(host_types):
                 return False
             continue
         if host_node.get(attr) != val:
@@ -1167,21 +1168,25 @@ class _GrandCypherTransformer(Transformer):
         return (cname, edge_types, direction, min_hop, max_hop)
 
     def node_match(self, node_name):
-        cname = node_type = json_data = None
-        for token in node_name:
-            if not isinstance(token, Token):
-                json_data = token
-            elif token.type == "CNAME":
-                cname = token
-            elif token.type == "TYPE":
-                node_type = token.value
+        cname = node_types = json_data = None
+        for item in node_name:
+            if not isinstance(item,Tree):
+                if not isinstance(item, Token):
+                    json_data = item
+                elif item.type == "CNAME":
+                    cname = item
+                elif item.type == "TYPE":
+                    node_types = set([item.value])
+            elif isinstance(item,Tree):
+                if item.data.value =='type_list':
+                    node_types=set([token.value for token in item.children])
         cname = cname or Token("CNAME", shortuuid())
         json_data = json_data or {}
-        node_type = set([node_type]) if node_type else set()
+        node_types = node_types if node_types else set()
 
-        return (cname, node_type, json_data)
+        return (cname, node_types, json_data)
 
-    def match_clause(self, match_clause: Tuple):
+    def match_clause(self, match_clause: Tuple): # construct the motif
         if len(match_clause) == 1:
             # This is just a node match:
             u, ut, js = match_clause[0]
@@ -1190,6 +1195,13 @@ class _GrandCypherTransformer(Transformer):
 
         match_clause = match_clause[1:] if not match_clause[0] else match_clause
         for start in range(0, len(match_clause) - 2, 2):
+            # u/v (token) - representing variable name of node
+            # ut/vt (set) - representing labels
+            # ujs/vjs (dict) - representing json rules
+            # g (token) - representing variable name of relation
+            # t (set) - representing relation labels (types)
+            # d (str) - representing direction: r,l,b
+            # minh/maxh (int) - min/max hops
             ((u, ut, ujs), (g, t, d, minh, maxh), (v, vt, vjs)) = match_clause[
                 start : start + 3
             ]

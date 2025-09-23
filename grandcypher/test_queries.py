@@ -2220,6 +2220,129 @@ class TestMatchWithOrOperatorInRelationships:
         assert res["n2.name"] == ["Carol", "Derek"]
 
 
+class TestMatchWithOrOperatorInNodeLabels:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_single_or_operator_in_start_node(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"Person", "Employee"}, name="Alice")
+        host.add_node("b", __labels__={"Person", "Manager"}, name="Bob")
+        host.add_node("c", __labels__={"Task"}, name="Project Plan")
+        host.add_edge("a", "c", __labels__={"ASSIGNED_TO"})
+        host.add_edge("b", "c", __labels__={"ASSIGNED_TO"})
+
+        qry = """
+        MATCH (n:Person|Manager)-[r]->(t:Task)
+        RETURN n.name, t.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert sorted(res["n.name"]) == ["Alice", "Bob"]
+        assert sorted(res["t.name"]) == ["Project Plan", "Project Plan"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_or_operator_in_end_node(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"User"}, name="Charlie")
+        host.add_node("b", __labels__={"Post"}, name="First Post")
+        host.add_node("c", __labels__={"Comment"}, name="First Comment")
+        host.add_node("d", __labels__={"Tag"}, name="Tech")
+        host.add_edge("a", "b", __labels__={"CREATES"})
+        host.add_edge("a", "c", __labels__={"CREATES"})
+
+        qry = """
+        MATCH (n:User)-[r]->(e:Post|Comment)
+        RETURN n.name, e.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert sorted(res["n.name"]) == ["Charlie", "Charlie"]
+        assert sorted(res["e.name"]) == ["First Comment", "First Post"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_multiple_or_operators_on_both_nodes(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"Employee", "Manager"}, name="Dave")
+        host.add_node("b", __labels__={"Project"}, name="Apollo")
+        host.add_node("c", __labels__={"Employee", "Senior"}, name="Eve")
+        host.add_node("d", __labels__={"Task"}, name="Database Setup")
+        host.add_edge("a", "b", __labels__={"MANAGES"})
+        host.add_edge("c", "d", __labels__={"ASSIGNED_TO"})
+        host.add_edge("a", "d", __labels__={"OVERSEES"})
+
+        qry = """
+        MATCH (n:Employee|Manager)-[r]->(m:Project|Task)
+        RETURN n.name, m.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert sorted(res["n.name"]) == ["Dave", "Dave", "Eve"]
+        assert sorted(res["m.name"]) == ["Apollo", "Database Setup", "Database Setup"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_match_with_or_on_nodes_and_relationships(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"User"}, name="Adam")
+        host.add_node("b", __labels__={"Company"}, name="Company Inc.")
+        host.add_node("c", __labels__={"Person"}, name="Alice")
+        host.add_edge("a", "b", __labels__={"WORKS_FOR"})
+        host.add_edge("a", "c", __labels__={"KNOWS"})
+        host.add_edge("c", "b", __labels__={"WORKS_FOR"})
+
+        qry = """
+        MATCH (n:User|Person)-[r:KNOWS|WORKS_FOR]->(m:Company|Person)
+        RETURN n.name, m.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert sorted(res["n.name"]) == ["Adam", "Adam", "Alice"]
+        assert sorted(res["m.name"]) == ["Alice", "Company Inc.", "Company Inc."]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_no_results_when_no_matching_nodes(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"User"}, name="Henry")
+        host.add_node("b", __labels__={"Location"}, name="Paris")
+        host.add_edge("a", "b", __labels__={"LIVES_IN"})
+
+        qry = """
+        MATCH (n:Person|Animal)
+        RETURN n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res.get("n.name", [])) == 0
+
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_or_operator_with_single_label_and_no_match(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"User"}, name="Henry")
+        host.add_node("b", __labels__={"Location"}, name="Paris")
+        host.add_edge("a", "b", __labels__={"LIVES_IN"})
+
+        qry = """
+        MATCH (n:Person|Tourist)-[]->()
+        RETURN n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res.get("n.name", [])) == 0
+
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_or_operator_on_nodes_with_property_filters(self, graph_type):
+        host = graph_type()
+        host.add_node("a", __labels__={"Book"}, name="Dune", pages=412)
+        host.add_node("b", __labels__={"Movie"}, name="Dune", runtime=155)
+        host.add_node("c", __labels__={"Book"}, name="Foundation", pages=255)
+        host.add_node("d", __labels__={"Author"}, name="Frank Herbert")
+        host.add_node("e", __labels__={"Author"}, name="Isaac Asimov")
+        host.add_edge("d", "a", __labels__={"WROTE"})
+        host.add_edge("e", "c", __labels__={"WROTE"})
+
+        qry = """
+        MATCH (p:Book|Movie)<-[r:WROTE]-(a:Author)
+        WHERE p.name == "Dune"
+        RETURN p.name, a.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["p.name"] == ["Dune"]
+        assert res["a.name"] == ["Frank Herbert"]
+
 class TestFunction:
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_id(self, graph_type):
