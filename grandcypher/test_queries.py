@@ -1,3 +1,4 @@
+from datetime import date
 import networkx as nx
 import pytest
 
@@ -2544,3 +2545,54 @@ class TestReturnFullNodeAttributes:
 
         # B.name should be just the attribute value
         assert result["B.name"][0] == "node_y"
+
+
+class TestWhereScopeFunction:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_single_function(self, graph_type):
+        host = graph_type()
+        host.add_node(1, d=date(2025, 10, 31))
+        host.add_node(2, d=date(2025, 11, 30))
+        host.add_node(3, d=date(2025, 12, 31))
+
+        qry = """
+        MATCH (A)
+        WHERE A.d < date(2025, 12, 1)
+        RETURN ID(A)
+        """
+
+        res = GrandCypher(host, scope_functions={"date": date}).run(qry)
+        print("@@@@@", res)
+        assert res["ID(A)"] == [1, 2]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_nested_functions(self, graph_type):
+        host = graph_type()
+        host.add_node(1, d=date(2025, 10, 31))
+        host.add_node(2, d=date(2025, 11, 30))
+        host.add_node(3, d=date(2025, 12, 31))
+
+        qry = """
+        MATCH (A)
+        WHERE A.d < date(int("2025"), add(5, 7), 1)
+        RETURN ID(A)
+        """
+
+        res = GrandCypher(host, scope_functions={"date": date, "int": int, "add": lambda a, b: a + b}).run(qry)
+        assert res["ID(A)"] == [1, 2]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_stringvalue(self, graph_type):
+        host = graph_type()
+        host.add_node(1, d='date(int("2025"), add(5, 7), 1)')
+        host.add_node(2, d='date(int("2025"), add(5, 7), 2)')
+        host.add_node(3, d='date(int("2025"), add(5, 7), 3)')
+
+        qry = """
+        MATCH (A)
+        WHERE A.d < "date(int(\\"2025\\"), add(5, 7), 2)"
+        RETURN ID(A)
+        """
+
+        res = GrandCypher(host, scope_functions={"date": date, "int": int, "add": lambda a, b: a + b}).run(qry)
+        assert res["ID(A)"] == [1]
