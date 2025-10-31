@@ -57,7 +57,7 @@ compound_condition  : condition
                     | "(" compound_condition boolean_arithmetic compound_condition ")"
                     | compound_condition boolean_arithmetic compound_condition
 
-condition           : (entity_id | scalar_function) op entity_id_or_value
+condition           : (entity_id | scalar_function) op (entity_id_or_value | scope_function)
                     | (entity_id | scalar_function) op_list value_list
                     | "not"i condition -> condition_not
 
@@ -92,6 +92,7 @@ AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
 
 scalar_function      : "id"i "(" entity_id ")" -> id_function
+scope_function       : CNAME "(" (value | scope_function)* ("," (value | scope_function))*  ")"
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -424,10 +425,10 @@ def _data_path_to_entity_name_attribute(data_path):
 
 
 class _GrandCypherTransformer(Transformer):
-    def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None):
+    def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None, scope_functions: Optional[dict] = None):
         self._target_graph = target_graph
-        self._entity2alias = dict()
-        self._alias2entity = dict()
+        self._entity2alias: dict[str, str] = dict()
+        self._alias2entity : dict[str, str]= dict()
         self._paths = []
         self._where_condition = None  # type: Optional[CONDITION]
         self._motif = nx.MultiDiGraph()
@@ -436,17 +437,18 @@ class _GrandCypherTransformer(Transformer):
         self._return_requests = []
         self._return_edges = {}
         self._aggregate_functions = []
-        self._aggregation_attributes = set()
-        self._original_return_requests = set()
-        self._distinct = False
+        self._aggregation_attributes: set[str] = set()
+        self._original_return_requests: set[str] = set()
+        self._distinct: bool = False
         self._order_by = None
         self._order_by_attributes = set()
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
         self._hints: Optional[List[Dict[Hashable, Hashable]]] = None
+        self._scope_functions = scope_functions
 
-    def set_hints(self, hints=None):
+    def set_hints(self, hints=None) -> "_GrandCypherTransformer":
         self._hints = hints
         return self
 
@@ -1259,6 +1261,16 @@ class _GrandCypherTransformer(Transformer):
     def condition_not(self, processed_condition):
         return (not processed_condition[0][0], *processed_condition[0][1:])
 
+    def scope_function(self, val):
+        """upon hitting a scope function, execute it to a scalar return"""
+        scope_functions = self._scope_functions or {}
+        if val[0] not in scope_functions:
+            raise KeyError(f"function {val[0]} not found in scope functions")
+        f = scope_functions[val[0]]
+        if len(val) > 1:
+            return f(*val[1:])
+        return f()
+
     null = lambda self, _: None
     true = lambda self, _: True
     false = lambda self, _: False
@@ -1342,7 +1354,7 @@ class GrandCypher:
 
     """
 
-    def __init__(self, host_graph: nx.Graph, limit: int = None) -> None:
+    def __init__(self, host_graph: nx.Graph, limit: int = None, scope_functions: Optional[dict] = None) -> None:
         """
         Create a new GrandCypher object to query graphs with Cypher.
 
@@ -1355,7 +1367,7 @@ class GrandCypher:
 
         """
 
-        self._transformer = _GrandCypherTransformer(host_graph, limit)
+        self._transformer = _GrandCypherTransformer(host_graph, limit, scope_functions=scope_functions)
         self._host_graph = host_graph
 
     def run(self, cypher: str, hints: Optional[List[dict]] = None) -> Dict[str, List]:
