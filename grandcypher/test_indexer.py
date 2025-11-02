@@ -1,5 +1,7 @@
 import pytest
-from .indexer import SKIP, AND, OR, Compare, IndexerConditionRunner, NoIndexQuerier
+from .indexer import (
+    SKIP, AND, OR, Compare, IndexerConditionRunner, NoIndexQuerier, ArrayAttributeIndexer, 
+    IncrementIndexQuerier)
 
 
 # ----- STUB CLASSES FOR TESTING -----
@@ -258,3 +260,133 @@ class TestNoIndexQuerier:
 
         with pytest.raises(ValueError):
             noindex_querier.get_comparator("===")
+
+    def test_all(self):
+        q = NoIndexQuerier(
+            key="",
+            indexed_entity_ids=[3, 4, 1, 2, 5, 6],
+            indexed_entity_attributes=[2, 2, 1, 1, 3, 3]
+        )
+        assert q.lt(2) == {1, 2}
+        assert q.gt(2) == {5, 6}
+        assert q.le(2) == {3, 4, 1, 2}
+        assert q.ge(2) == {3, 4, 5, 6}
+        assert q.eq(2) == {3, 4}
+        assert q.ne(2) == {1, 2, 5, 6}
+
+
+@pytest.fixture
+def inc_index_querier() -> NoIndexQuerier:
+    entity_ids = ["A", "C", "D", "E"]
+    entity_attrs = [3, 7, 3, 10]
+    return NoIndexQuerier("age", entity_ids, entity_attrs)
+
+
+class TestIncrementIndexQuerier:
+
+    def test_lt(self, inc_index_querier: NoIndexQuerier):
+        result = inc_index_querier.lt(5)
+        # A(3), D(3) < 5; ignore None; C(7), E(10) are >5
+        assert result == {"A", "D"}
+
+    def test_gt(self, inc_index_querier: NoIndexQuerier):
+        result = inc_index_querier.gt(5)
+        assert result == {"C", "E"}
+
+    def test_ge(self, inc_index_querier: NoIndexQuerier):
+        result = inc_index_querier.ge(3)
+        # A(3), C(7), D(3), E(10)
+        assert result == {"A", "C", "D", "E"}
+
+    def test_le(self, inc_index_querier: NoIndexQuerier):
+        result = inc_index_querier.le(3)
+        assert result == {"A", "D"}
+
+    def test_eq(self, inc_index_querier: NoIndexQuerier):
+        result = inc_index_querier.eq(3)
+        assert result == {"A", "D"}
+
+    def test_ne(self, inc_index_querier: NoIndexQuerier):
+        result = inc_index_querier.ne(3)
+        # B(None) ignored → remaining: C(7), E(10)
+        assert result == {"C", "E"}
+
+    def test_eq_none_ignored(self, inc_index_querier: NoIndexQuerier):
+        # Should always return empty because None is ignored in comparisons
+        result = inc_index_querier.eq(None)
+        assert result == set()
+
+    def test_get_comparator_supported_ops(self, inc_index_querier: NoIndexQuerier):
+        assert inc_index_querier.get_comparator("<") == inc_index_querier.lt
+        assert inc_index_querier.get_comparator("<=") == inc_index_querier.le
+        assert inc_index_querier.get_comparator(">") == inc_index_querier.gt
+        assert inc_index_querier.get_comparator(">=") == inc_index_querier.ge
+        assert inc_index_querier.get_comparator("==") == inc_index_querier.eq
+        assert inc_index_querier.get_comparator("=") == inc_index_querier.eq
+        assert inc_index_querier.get_comparator("!=") == inc_index_querier.ne
+        assert inc_index_querier.get_comparator("<>") == inc_index_querier.ne
+
+    def test_get_comparator_unsupported_operator(self, inc_index_querier: NoIndexQuerier):
+        with pytest.raises(ValueError):
+            inc_index_querier.get_comparator("IN")
+
+        with pytest.raises(ValueError):
+            inc_index_querier.get_comparator("LIKE")
+
+        with pytest.raises(ValueError):
+            inc_index_querier.get_comparator("===")
+
+    def test_all(self):
+        q = IncrementIndexQuerier(
+            key="",
+            indexed_entity_ids=[1, 2, 3, 4, 5, 6],
+            indexed_entity_attributes=[1, 1, 2, 2, 3, 3]
+        )
+        assert q.lt(2) == {1, 2}
+        assert q.gt(2) == {5, 6}
+        assert q.le(2) == {1, 2, 3, 4}
+        assert q.ge(2) == {3, 4, 5, 6}
+        assert q.eq(2) == {3, 4}
+        assert q.ne(2) == {1, 2, 5, 6}
+
+
+class TestArrayAttributeIndexer:
+    def test_create_indices(self):
+        indexer = ArrayAttributeIndexer(
+            entity_ids=[3, 4, 1, 2, 5, 6],
+            entity_attributes=[{"k1": 2, "k2": 2},
+                               {"k1": 2, "k2": 2},
+                               {"k1": 1, "k2": 1},
+                               {"k1": 1, "k2": 1},
+                               {"k1": 3, "k2": 3},
+                               {"k1": 3, "k2": 3}]
+        )
+
+        assert len(indexer.indexed_entity_ids) == 0
+        assert len(indexer.indexed_entity_attributes) == 0
+
+        indexer.create_indices(["k1"])
+        assert indexer.indexed_entity_ids["k1"] == [1, 2, 3, 4, 5, 6]
+        assert indexer.indexed_entity_attributes["k1"] == [1, 1, 2, 2, 3, 3]
+
+    def test_get_index_querier(self):
+        indexer = ArrayAttributeIndexer(
+            entity_ids=[3, 4, 1, 2, 5, 6],
+            entity_attributes=[{"k1": 2, "k2": 2},
+                               {"k1": 2, "k2": 2},
+                               {"k1": 1, "k2": 1},
+                               {"k1": 1, "k2": 1},
+                               {"k1": 3, "k2": 3},
+                               {"k1": 3, "k2": 3}]
+        )
+
+
+        indexer.create_indices(["k1"])
+
+        incr_querier = indexer.get_index_querier("k1")
+        assert incr_querier.indexed_entity_ids == [1, 2, 3, 4, 5, 6]
+        assert incr_querier.indexed_entity_attributes == [1, 1, 2, 2, 3, 3]
+
+        no_querier = indexer.get_index_querier("k2")
+        assert no_querier.indexed_entity_ids == [3, 4, 1, 2, 5, 6]
+        assert no_querier.indexed_entity_attributes == [2, 2, 1, 1, 3, 3]

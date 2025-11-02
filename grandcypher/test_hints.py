@@ -171,3 +171,218 @@ class TestWrongHints:
         gc._doublecheck_hint_result = True
         res = gc.run(qry, hints=[{"A": "x", "B": "y"}])
         assert res == {'ID(A)': [], 'ID(B)': []}
+
+
+class TestAutoHintsFromNodeJson:
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_no_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A)-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        res = gc.run(qry)
+        assert res == {"A.name": ["Arthur Dent"]}
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_jsondata_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A {name: "Arthur Dent"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        res = gc.run(qry)
+        assert res == {"A.name": ["Arthur Dent"]}
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_jsondata_and_explicit_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A {name: "Arthur Dent"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        res = gc.run(qry, hints=[{"A": 2}])
+        assert res == {"A.name": ["Arthur Dent"]}
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_double_jsondata_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A {name: "Arthur Dent", type: "human"})-[r]->(B {type: "dog"})
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        res = gc.run(qry)
+        assert res == {"A.name": ["Arthur Dent"]}
+
+        qry = """
+        MATCH (A {name: "Arthur Dent", type: "alien"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        res = gc.run(qry)
+        assert res == {"A.name": []}
+
+
+class TestAutoHintsWithIndexFromNodeJson:
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_no_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A)-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        gc.create_node_indices(["type"])
+        res = gc.run(qry)
+        assert res == {"A.name": ["Arthur Dent"]}
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_jsondata_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A {name: "Arthur Dent"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        gc.create_node_indices(["type"])
+        res = gc.run(qry)
+        assert res == {"A.name": ["Arthur Dent"]}
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_jsondata_and_explicit_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A {name: "Arthur Dent"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        gc.create_node_indices(["type"])
+        res = gc.run(qry, hints=[{"A": 2}])
+        assert res == {"A.name": ["Arthur Dent"]}
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_double_jsondata_hints(self, graph_type):
+        host = graph_type()
+        host.add_node(1, type="alien", name="Ford Prefect")
+        host.add_node(2, type="human", name="Arthur Dent")
+        host.add_node(3, type="alien", name="Zaphod Beeblebrox")
+        host.add_node(4, type="dog", name="Fido")
+        host.add_edge(1, 4, type="petting")
+        host.add_edge(2, 4, type="petting")
+        host.add_edge(3, 4, type="petting")
+
+        qry = """
+        MATCH (A {name: "Arthur Dent", type: "human"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        gc.create_node_indices(["type"])
+        res = gc.run(qry)
+        assert res == {"A.name": ["Arthur Dent"]}
+
+        qry = """
+        MATCH (A {name: "Arthur Dent", type: "alien"})-[r]->(B)
+        WHERE A.type == "human"
+        RETURN A.name
+        """
+
+        gc = GrandCypher(host)
+        gc.auto_node_jsondata_hint = True
+        gc.create_node_indices(["type"])
+        res = gc.run(qry)
+        assert res == {"A.name": []}
