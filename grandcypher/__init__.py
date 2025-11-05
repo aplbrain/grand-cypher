@@ -181,8 +181,6 @@ class SUBOP:
 
 
 class SUBOP_EXIST(SUBOP):
-    def __init__(self):
-        self._not = False
 
     def __call__(self, match: dict, executor: "GrandCypherExecutor"):
         executor.clear_matches()
@@ -209,8 +207,8 @@ class SUBOP_EXIST(SUBOP):
         executor._auto_where_hints = bk_auto_where_hints
 
         if executor._matches:
-            return self._not ^ True
-        return self._not ^ False
+            return True
+        return False
 
 
 _SUB_OPERATORS = {
@@ -1511,9 +1509,6 @@ class GrandCypherTransformer(Transformer):
             return (True, entity_id, operator, value)
 
     def condition_not(self, processed_condition):
-        if isinstance(processed_condition[0][2], SUBOP_EXIST):
-            processed_condition[0][2]._not = True
-            return processed_condition[0]
         return (not processed_condition[0][0], *processed_condition[0][1:])
 
     null = lambda self, _: None
