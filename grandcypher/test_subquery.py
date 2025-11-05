@@ -100,7 +100,27 @@ def test_sub_query_3_level():
     assert res == {'ID(A)': ['x']}
 
 
-def test_negated_edge():
+def test_negated_edge_edge_label():
+    host = nx.DiGraph()
+    host.add_node("x")
+    host.add_node("y")
+    host.add_node("z")
+    host.add_edge("x", "y", __labels__={"XY"}, name="XY")
+    host.add_edge("x", "z", __labels__={"XZ"}, name="XZ")
+
+    qry = """
+    MATCH (A) --> (B)
+    where NOT EXISTS {
+        MATCH (A) -[:XY]-> (B)
+    }
+    RETURN ID(A), ID(B)
+    """
+
+    res = GrandCypher(host).run(qry)
+    assert res == {'ID(A)': ['x'], 'ID(B)': ['z']}
+
+
+def test_negated_edge_where():
     host = nx.DiGraph()
     host.add_node("x")
     host.add_node("y")
@@ -111,9 +131,8 @@ def test_negated_edge():
     qry = """
     MATCH (A) --> (B)
     where  NOT EXISTS {
-        MATCH (A) -[r:XY]-> (B)
-        where r.name = "XY"
-        return A, r, B
+        MATCH (A) -[r]-> (B)
+        WHERE r.name = XY
     }
     RETURN ID(A), ID(B)
     """

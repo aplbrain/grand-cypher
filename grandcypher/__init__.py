@@ -181,8 +181,6 @@ class SUBOP:
 
 
 class SUBOP_EXIST(SUBOP):
-    def __init__(self):
-        self._not = False
 
     def __call__(self, match: dict, executor: "GrandCypherExecutor"):
         executor.clear_matches()
@@ -190,21 +188,27 @@ class SUBOP_EXIST(SUBOP):
         bk_hints = executor._hints
         bk_run_without_return = executor.run_without_return
         bk_limit = executor._limit
-        executor.set_hints([match])
+        bk_doublecheck_hint = executor._doublecheck_hint_result
+        bk_auto_where_hints = executor._auto_where_hints
         # settings such that it favor EXISTS operation
+        executor.set_hints([match])
         # we don't need return, and we only need 1 row
         executor.run_without_return = True
         executor._limit = 1
+        executor._doublecheck_hint_result = True
+        executor._auto_where_hints = False
         # run and ignore return
         executor.returns()
         # recover the settings
+        executor.set_hints(bk_hints)
         executor.run_without_return = bk_run_without_return
         executor._limit = bk_limit
-        executor.set_hints(bk_hints)
+        executor._doublecheck_hint_result = bk_doublecheck_hint
+        executor._auto_where_hints = bk_auto_where_hints
 
         if executor._matches:
-            return self._not ^ True
-        return self._not ^ False
+            return True
+        return False
 
 
 _SUB_OPERATORS = {
@@ -596,6 +600,7 @@ class GrandCypherExecutor:
         self._child_executors: list["GrandCypherExecutor"] = []
         self.run_without_return = False
         self._level = 0
+        self._doublecheck_hint_result = False
         self._auto_where_hints = True
 
     def set_hints(self, hints=None):
@@ -1104,6 +1109,7 @@ class GrandCypherExecutor:
             grandiso_finder = grandiso.find_motifs_iter(
                 c_motif,
                 self._target_graph,
+                # is_node_structural_match=_is_node_structural_match,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
                 # Giving wrong hint will cause error
@@ -1128,9 +1134,7 @@ class GrandCypherExecutor:
             for x, iterator in enumerate(iterators):
                 grandiso_finder, c_motif, c_hints = iterator
                 for match in grandiso_finder:
-                    # as hints are not checked against node and edge match in grandiso
-                    # let's do double check here
-                    if c_hints and not hinter.doublecheck(
+                    if self._doublecheck_hint_result and not hinter.doublecheck(
                         host=self._target_graph,
                         motif=c_motif,
                         match=match,
@@ -1491,9 +1495,6 @@ class GrandCypherTransformer(Transformer):
             return (True, entity_id, operator, value)
 
     def condition_not(self, processed_condition):
-        if isinstance(processed_condition[0][2], SUBOP_EXIST):
-            processed_condition[0][2]._not = True
-            return processed_condition[0]
         return (not processed_condition[0][0], *processed_condition[0][1:])
 
     null = lambda self, _: None
@@ -1592,6 +1593,14 @@ class GrandCypher:
 
         self._transformer = GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
+
+    @property
+    def _doublecheck_hint_result(self,):
+        return self._transformer._executors[0]._doublecheck_hint_result
+
+    @_doublecheck_hint_result.setter
+    def _doublecheck_hint_result(self, value):
+        self._transformer._executors[0]._doublecheck_hint_result = value
 
     def run(self, cypher: str, hints: Optional[List[dict]] = None) -> Dict[str, List]:
         """
