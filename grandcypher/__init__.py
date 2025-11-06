@@ -7,7 +7,7 @@ to search in a much larger graph database.
 
 """
 
-from typing import Dict, Hashable, List, Callable, Optional, Tuple, Union
+from typing import Any, Dict, Hashable, List, Callable, Optional, Tuple, Union
 from collections import OrderedDict
 import random
 import string
@@ -330,39 +330,73 @@ def _get_edge(host: Union[nx.DiGraph, nx.MultiDiGraph], mapping, match_path, u, 
 CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
 
-def and_(cond_a, cond_b) -> CONDITION:
-    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_edges)
-        condition_b, where_b = cond_b(match, host, return_edges)
+class Condition:
+    ...
+
+class BoolCondition(Condition):
+    ...
+
+
+class AND(BoolCondition):
+    def __init__(self, condition_a: CONDITION, condition_b: CONDITION):
+        self._condition_a = condition_a
+        self._condition_b = condition_b
+        self._operator = "and"
+    
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = self._condition_a(match, host, return_edges)
+        condition_b, where_b = self._condition_b(match, host, return_edges)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
-    return inner
 
-
-def or_(cond_a, cond_b):
-    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_edges)
-        condition_b, where_b = cond_b(match, host, return_edges)
+class OR(BoolCondition):
+    def __init__(self, condition_a: CONDITION, condition_b: CONDITION):
+        self._condition_a = condition_a
+        self._condition_b = condition_b
+        self._operator = "or"
+    
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> tuple[bool, dict]:
+        condition_a, where_a = self._condition_a(match, host, return_edges)
+        condition_b, where_b = self._condition_b(match, host, return_edges)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
-    return inner
+
+class CompareCondition(Condition):
+    ...
 
 
-def cond_(should_be, entity_id, operator, value) -> CONDITION:
-    def inner(
-        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_edges: list
-    ) -> bool:
+class LambdaCompareCondition(CompareCondition):
+    def __init__(self, operator_function: Callable[[Any, Any], bool], operator: str):
+        self._operator_function = operator_function
+        self._operator = operator
+
+    def __call__(self, value1, value2):
+        return self._operator_function(value1, value2)
+    
+    def __str__(self) -> str:
+        return f"{self._operator!r} condition at: " + super().__str__()
+
+
+class CompoundCondition(Condition):
+    """compound condition"""
+    def __init__(self, should_be: bool, entity_id: str, operator, value):
+        self._should_be = should_be
+        self._entity_id = entity_id
+        self._operator = operator
+        self._value = value
+    
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
         # Check if this is an ID function call
-        if entity_id.startswith("ID(") and entity_id.endswith(")"):
+        if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
             # Extract the entity name from ID(entity_name)
-            actual_entity_name = entity_id[3:-1]  # Remove "ID(" and ")"
+            actual_entity_name = self._entity_id[3:-1]  # Remove "ID(" and ")"
             if actual_entity_name in match:
                 # Return the node ID directly
                 node_id = match[actual_entity_name]
                 try:
-                    val = operator(node_id, value)
+                    val = self._operator(node_id, self._value)
                 except:
                     val = False
                 operator_results = [val]
@@ -370,7 +404,7 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
                 raise IndexError(f"Entity {actual_entity_name} not in match.")
         else:
             # Regular entity attribute access
-            host_entity_id = entity_id.split(".")
+            host_entity_id = self._entity_id.split(".")
             if host_entity_id[0] in match:
                 host_entity_id[0] = match[host_entity_id[0]]
             elif host_entity_id[0] in return_edges:
@@ -387,27 +421,43 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
                 r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
                 for r_val in r_vals:
                     try:
-                        operator_results.append(operator(r_val, value))
+                        operator_results.append(self._operator(r_val, self._value))
                     except:
                         operator_results.append(False)
                 val = any(operator_results)
             else:
                 try:
-                    val = operator(_get_entity_from_host(host, *host_entity_id), value)
+                    val = self._operator(_get_entity_from_host(host, *host_entity_id), self._value)
                 except:
                     val = False
+                    raise
                 operator_results.append(val)
 
-        if val != should_be:
+        if val != self._should_be:
             return False, operator_results
         return True, operator_results
 
-    return inner
+
+_OPERATORS = {
+    "=": LambdaCompareCondition(lambda x, y: x == y, "="),
+    "==": LambdaCompareCondition(lambda x, y: x == y, "=="),
+    ">=": LambdaCompareCondition(lambda x, y: x >= y, ">="),
+    "<=": LambdaCompareCondition(lambda x, y: x <= y, "<="),
+    "<": LambdaCompareCondition(lambda x, y: x < y, "<"),
+    ">": LambdaCompareCondition(lambda x, y: x > y, ">"),
+    "!=": LambdaCompareCondition(lambda x, y: x != y, "!="),
+    "<>": LambdaCompareCondition(lambda x, y: x != y, "<>"),
+    "in": LambdaCompareCondition(lambda x, y: x in y, "in"),
+    "contains": LambdaCompareCondition(lambda x, y: y in x, "contains"),
+    "is": LambdaCompareCondition(lambda x, y: x is y, "is"),
+    "starts_with": LambdaCompareCondition(lambda x, y: x.startswith(y), "starts_with"),
+    "ends_with": LambdaCompareCondition(lambda x, y: x.endswith(y), "ends_with"),
+}
 
 
 _BOOL_ARI = {
-    "and": and_,
-    "or": or_,
+    "and": AND,
+    "or": OR,
 }
 
 
@@ -999,6 +1049,7 @@ class _GrandCypherTransformer(Transformer):
 
                     # Apply WHERE condition if present
                     if self._where_condition:
+                        print("??????", self._where_condition)
                         satisfies_where, where_results = self._where_condition(
                             match, self._target_graph, self._return_edges
                         )
@@ -1239,7 +1290,7 @@ class _GrandCypherTransformer(Transformer):
 
     def compound_condition(self, val):
         if len(val) == 1:
-            val = cond_(*val[0])
+            val = CompoundCondition(*val[0])
         else:  # len == 3
             compound_a, operator, compound_b = val
             val = operator(compound_a, compound_b)
