@@ -9,6 +9,7 @@ dependencies = [
     "grandiso>=2.2.0",
     "lark>=1.2.2",
     "networkx>=3.4.2",
+    "cachetools>=6.2.1",
 ]
 description = "Query Grand and NetworkX graphs using Cypher syntax."
 readme = "README.md"
