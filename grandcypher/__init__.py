@@ -7,33 +7,21 @@ to search in a much larger graph database.
 
 """
 
-from typing import Dict, Hashable, List, Callable, Optional, Tuple, Union
+from typing import Any, Dict, List, Callable, Optional, Tuple, Union
 from collections import OrderedDict
 import random
 import string
 from functools import lru_cache
 import networkx as nx
+from lark import Lark, Transformer, v_args, Token, Tree
 
 import grandiso
 
-from lark import Lark, Transformer, v_args, Token, Tree
-
-
-_OPERATORS = {
-    "=": lambda x, y: x == y,
-    "==": lambda x, y: x == y,
-    ">=": lambda x, y: x >= y,
-    "<=": lambda x, y: x <= y,
-    "<": lambda x, y: x < y,
-    ">": lambda x, y: x > y,
-    "!=": lambda x, y: x != y,
-    "<>": lambda x, y: x != y,
-    "in": lambda x, y: x in y,
-    "contains": lambda x, y: y in x,
-    "is": lambda x, y: x is y,
-    "starts_with": lambda x, y: x.startswith(y),
-    "ends_with": lambda x, y: x.endswith(y),
-}
+from .hinter  import HintType, Hinter
+from .indexer import (
+    Compare as IndexerCompare, OR as IndexerOr,
+    AND as IndexerAnd, ArrayAttributeIndexer,
+    UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
 
 
 _GrandCypherGrammar = Lark(
@@ -280,11 +268,14 @@ def _aggregate_edge_labels(edges: Dict) -> Dict:
     Aggregate '__labels__' attributes from edges into a single set.
     """
     aggregated = {"__labels__": set()}
-    for edge_id, attrs in edges.items():
+    for _, attrs in edges.items():
         if "__labels__" in attrs and attrs["__labels__"]:
             aggregated["__labels__"].update(attrs["__labels__"])
+            # issue #85 - temporary fix by updating other attributes of the edge
+            # We still need to understand more why we need aggregation.
+            aggregated.update(((k, v) for k, v in attrs.items() if k != '__labels__'))
         elif "__labels__" not in attrs:
-            aggregated[edge_id] = attrs
+            aggregated = attrs.copy()
     return aggregated
 
 
@@ -330,39 +321,76 @@ def _get_edge(host: Union[nx.DiGraph, nx.MultiDiGraph], mapping, match_path, u, 
 CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
 
-def and_(cond_a, cond_b) -> CONDITION:
-    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_edges)
-        condition_b, where_b = cond_b(match, host, return_edges)
+class Condition:
+    ...
+
+class BoolCondition(Condition):
+    ...
+
+
+class AND(BoolCondition):
+    def __init__(self, condition_a: CONDITION, condition_b: CONDITION):
+        self._condition_a = condition_a
+        self._condition_b = condition_b
+        self._operator = "and"
+
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = self._condition_a(match, host, return_edges)
+        condition_b, where_b = self._condition_b(match, host, return_edges)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
-    return inner
 
+class OR(BoolCondition):
+    def __init__(self, condition_a: CONDITION, condition_b: CONDITION):
+        self._condition_a = condition_a
+        self._condition_b = condition_b
+        self._operator = "or"
 
-def or_(cond_a, cond_b):
-    def inner(match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = cond_a(match, host, return_edges)
-        condition_b, where_b = cond_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> tuple[bool, dict]:
+        condition_a, where_a = self._condition_a(match, host, return_edges)
+        condition_b, where_b = self._condition_b(match, host, return_edges)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
-    return inner
+
+class CompareCondition(Condition):
+    ...
 
 
-def cond_(should_be, entity_id, operator, value) -> CONDITION:
-    def inner(
-        match: dict, host: Union[nx.DiGraph, nx.MultiDiGraph], return_edges: list
-    ) -> bool:
+class LambdaCompareCondition(CompareCondition):
+    def __init__(self, operator_function: Callable[[Any, Any], bool], operator: str):
+        self._operator_function = operator_function
+        self._operator = operator
+
+    def __call__(self, value1, value2):
+        return self._operator_function(value1, value2)
+
+    def __str__(self) -> str:
+        return f"{self._operator!r} condition at: " + super().__str__()
+
+
+class CompoundCondition(Condition):
+    """compound condition"""
+    def __init__(self, should_be: bool, entity_id: str, operator, value):
+        self._should_be = should_be
+        self._entity_id = entity_id
+        self._operator = operator
+        self._value = value
+
+    def __str__(self):
+        return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
+
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
         # Check if this is an ID function call
-        if entity_id.startswith("ID(") and entity_id.endswith(")"):
+        if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
             # Extract the entity name from ID(entity_name)
-            actual_entity_name = entity_id[3:-1]  # Remove "ID(" and ")"
+            actual_entity_name = self._entity_id[3:-1]  # Remove "ID(" and ")"
             if actual_entity_name in match:
                 # Return the node ID directly
                 node_id = match[actual_entity_name]
                 try:
-                    val = operator(node_id, value)
+                    val = self._operator(node_id, self._value)
                 except:
                     val = False
                 operator_results = [val]
@@ -370,7 +398,7 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
                 raise IndexError(f"Entity {actual_entity_name} not in match.")
         else:
             # Regular entity attribute access
-            host_entity_id = entity_id.split(".")
+            host_entity_id = self._entity_id.split(".")
             if host_entity_id[0] in match:
                 host_entity_id[0] = match[host_entity_id[0]]
             elif host_entity_id[0] in return_edges:
@@ -387,27 +415,43 @@ def cond_(should_be, entity_id, operator, value) -> CONDITION:
                 r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
                 for r_val in r_vals:
                     try:
-                        operator_results.append(operator(r_val, value))
+                        operator_results.append(self._operator(r_val, self._value))
                     except:
                         operator_results.append(False)
                 val = any(operator_results)
             else:
                 try:
-                    val = operator(_get_entity_from_host(host, *host_entity_id), value)
+                    val = self._operator(_get_entity_from_host(host, *host_entity_id), self._value)
                 except:
                     val = False
+
                 operator_results.append(val)
 
-        if val != should_be:
+        if val != self._should_be:
             return False, operator_results
         return True, operator_results
 
-    return inner
+
+_OPERATORS = {
+    "=": LambdaCompareCondition(lambda x, y: x == y, "="),
+    "==": LambdaCompareCondition(lambda x, y: x == y, "=="),
+    ">=": LambdaCompareCondition(lambda x, y: x >= y, ">="),
+    "<=": LambdaCompareCondition(lambda x, y: x <= y, "<="),
+    "<": LambdaCompareCondition(lambda x, y: x < y, "<"),
+    ">": LambdaCompareCondition(lambda x, y: x > y, ">"),
+    "!=": LambdaCompareCondition(lambda x, y: x != y, "!="),
+    "<>": LambdaCompareCondition(lambda x, y: x != y, "<>"),
+    "in": LambdaCompareCondition(lambda x, y: x in y, "in"),
+    "contains": LambdaCompareCondition(lambda x, y: y in x, "contains"),
+    "is": LambdaCompareCondition(lambda x, y: x is y, "is"),
+    "starts_with": LambdaCompareCondition(lambda x, y: x.startswith(y), "starts_with"),
+    "ends_with": LambdaCompareCondition(lambda x, y: x.endswith(y), "ends_with"),
+}
 
 
 _BOOL_ARI = {
-    "and": and_,
-    "or": or_,
+    "and": AND,
+    "or": OR,
 }
 
 
@@ -421,6 +465,58 @@ def _data_path_to_entity_name_attribute(data_path):
         entity_attribute = None
 
     return entity_name, entity_attribute
+
+
+# this is to convert WHERE OPERATOR to INDEXER OPERATOR
+WHERE_OPERATORS_TO_INDEXER_OPERATORS = {
+    "=": "==",
+    "==": "==",
+    ">": ">",
+    ">=": ">=",
+    "<": "<",
+    "<=": "<=",
+}
+
+
+# this is to conver WHERE NOT OPERATOR to INDEXER OPERATOR
+NOT_WHERE_OPERATORS_TO_INDEXER_OPERATORS = {
+    "=": "!=",
+    "==": "!=",
+    ">": "<=",
+    ">=": "<",
+    "<": ">=",
+    "<=": ">",
+}
+
+
+def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_be=True):
+    # for condition in condition:
+    if isinstance(condition, CompoundCondition):
+        return to_indexer_ast(condition=condition._operator,
+                                entity_id=condition._entity_id,
+                                value=condition._value,
+                                should_be=condition._should_be)
+    if (isinstance(condition, LambdaCompareCondition) and
+        condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
+        if entity_id.startswith("ID()"):
+            entity_id = entity_id[3:-1]
+        operator = condition._operator
+        if should_be is True:
+            operator = WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
+        else:
+            operator = NOT_WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
+        return IndexerCompare(operator, entity_id, value)
+    if isinstance(condition, OR):
+        return IndexerOr(
+            to_indexer_ast(condition._condition_a, entity_id, value),
+            to_indexer_ast(condition._condition_b, entity_id, value),
+        )
+    if isinstance(condition, AND):
+        return IndexerAnd(
+            to_indexer_ast(condition._condition_a, entity_id, value),
+            to_indexer_ast(condition._condition_b, entity_id, value),
+        )
+    return IndexerUnsupportedOp(condition, entity_id, value)
 
 
 class _GrandCypherTransformer(Transformer):
@@ -444,7 +540,8 @@ class _GrandCypherTransformer(Transformer):
         self._limit = limit
         self._skip = 0
         self._max_hop = 100
-        self._hints: Optional[List[Dict[Hashable, Hashable]]] = None
+        self._hints: Optional[List[HintType]] = None
+        self._auto_where_hints = True
 
     def set_hints(self, hints=None):
         self._hints = hints
@@ -1016,25 +1113,63 @@ class _GrandCypherTransformer(Transformer):
         return list(zip(self._matches, self._matche_paths))
 
     def _matches_iter(self, motif):
+        hinter = Hinter(_is_node_attr_match, _is_edge_attr_match)
+        if self._hints:
+            hints = self._hints
+        elif self._auto_where_hints:
+            indexer = ArrayAttributeIndexer(
+                entity_ids=list(self._target_graph.nodes()),
+                entity_attributes=list(self._target_graph.nodes[n] for n in self._target_graph.nodes))
+            indexer_condition_ast = to_indexer_ast(self._where_condition)
+            entity_domain = IndexerConditionRunner(indexer=indexer).find(indexer_condition_ast)
+            hints = hinter.index_domain_to_hints(entity_domain)
+        else:
+            hints = []
+
         # Get list of all match iterators
-        iterators = [
-            grandiso.find_motifs_iter(
-                motif.subgraph(c),
+        iterators = []
+        for c in nx.weakly_connected_components(motif):
+            c_motif = motif.subgraph(c)
+            c_hints = hinter.take_hints_with_keys(hints, c)
+            if self._auto_where_hints:
+                c_hints = hinter.eliminate_supersets(c_hints)
+            grandiso_finder = grandiso.find_motifs_iter(
+                c_motif,
                 self._target_graph,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
-                hints=self._hints if self._hints is not None else [],
+                # hints=self._hints if self._hints is not None else [],
+                # NOTE: making sure only giving hints to "relevant" nodes.
+                # Giving wrong hint will cause error
+                hints=c_hints ,
             )
-            for c in nx.weakly_connected_components(motif)
-        ]
-
+            iterators.append((grandiso_finder, c_motif, c_hints))
         # Single match clause iterator
         if iterators and len(iterators) == 1:
-            yield from iterators[0]
+            grandiso_finder, c_motif, c_hints = iterators[0]
+            for match in grandiso_finder:
+                # as hints are not checked against node and edge match in grandiso
+                # let's do double check here
+                if c_hints and not hinter.doublecheck(
+                    host=self._target_graph,
+                    motif=c_motif,
+                    match=match,
+                    hints=c_hints):
+                    continue
+                yield match
         else:
             iterations, matches = 0, {}
             for x, iterator in enumerate(iterators):
-                for match in iterator:
+                grandiso_finder, c_motif, c_hints = iterator
+                for match in grandiso_finder:
+                    # as hints are not checked against node and edge match in grandiso
+                    # let's do double check here
+                    if c_hints and not hinter.doublecheck(
+                        host=self._target_graph,
+                        motif=c_motif,
+                        match=match,
+                        hints=c_hints):
+                        continue
                     if x not in matches:
                         matches[x] = []
                     matches[x].append(match)
@@ -1239,7 +1374,7 @@ class _GrandCypherTransformer(Transformer):
 
     def compound_condition(self, val):
         if len(val) == 1:
-            val = cond_(*val[0])
+            val = CompoundCondition(*val[0])
         else:  # len == 3
             compound_a, operator, compound_b = val
             val = operator(compound_a, compound_b)
