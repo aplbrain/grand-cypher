@@ -20,7 +20,7 @@ import grandiso
 from .hinter  import HintType, Hinter
 from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
-    AND as IndexerAnd, ArrayAttributeIndexer,
+    AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
 
 
@@ -544,7 +544,16 @@ NOT_WHERE_OPERATORS_TO_INDEXER_OPERATORS = {
 }
 
 
-def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_be=True):
+def create_node_indexer(target_graph: nx.DiGraph) -> ArrayAttributeIndexer:
+    """create indexer for graph nodes"""
+    indexer = ArrayAttributeIndexer(
+        entity_ids=list(target_graph.nodes()),
+        entity_attributes=list(target_graph.nodes[n] for n in target_graph.nodes))
+    return indexer
+
+
+def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_be=True) -> IndexerConditionAST:
+    """convert where condition to IndexerConditionAST which can be run with IndexerConditionRunner"""
     # for condition in condition:
     if isinstance(condition, CompoundCondition):
         return to_indexer_ast(condition=condition._operator,
@@ -598,9 +607,14 @@ class GrandCypherExecutor:
         self._hints: Optional[List[HintType]] = None
         self._parent_executor: Optional["GrandCypherExecutor"] = None
         self._child_executors: list["GrandCypherExecutor"] = []
+        # tell the executor not to check the return values
         self.run_without_return = False
+        # level of subquery
         self._level = 0
+        # tell the engine to double check hint related nodes and edges structure
+        # as they are ignored in grandiso
         self._doublecheck_hint_result = False
+        # whether auto_where_hints should be generated
         self._auto_where_hints = True
 
     def set_hints(self, hints=None):
