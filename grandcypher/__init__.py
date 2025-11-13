@@ -190,6 +190,7 @@ class SUBOP_EXIST(SUBOP):
         bk_limit = executor._limit
         bk_doublecheck_hint = executor._doublecheck_hint_result
         bk_auto_where_hints = executor._auto_where_hints
+        bk_auto_node_jsondata_hints = executor._auto_node_jsondata_hints
         # settings such that it favor EXISTS operation
         executor.set_hints([match])
         # we don't need return, and we only need 1 row
@@ -197,6 +198,7 @@ class SUBOP_EXIST(SUBOP):
         executor._limit = 1
         executor._doublecheck_hint_result = True
         executor._auto_where_hints = False
+        executor._auto_node_jsondata_hints = False
         # run and ignore return
         executor.returns()
         # recover the settings
@@ -205,6 +207,7 @@ class SUBOP_EXIST(SUBOP):
         executor._limit = bk_limit
         executor._doublecheck_hint_result = bk_doublecheck_hint
         executor._auto_where_hints = bk_auto_where_hints
+        executor._auto_node_jsondata_hints = bk_auto_node_jsondata_hints
 
         if executor._matches:
             return True
@@ -583,6 +586,24 @@ def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_
     return IndexerUnsupportedOp(condition, entity_id, value)
 
 
+def motif_to_indexer_ast(motif: nx.DiGraph) -> IndexerConditionAST:
+    # TODO: Test
+    ast = None
+    for cname, json_data in motif.nodes(data=True):
+        for k, v in json_data.items():
+            if k == "__labels__":
+                continue
+            k = cname + "." + k
+            if ast is None:
+                ast = IndexerCompare("==", k, v)
+            else:
+                ast = IndexerAnd(
+                    ast,
+                    IndexerCompare("==", k, v)
+                )
+    return ast
+
+
 class GrandCypherExecutor:
     def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None):
         self._target_graph = target_graph
@@ -616,6 +637,17 @@ class GrandCypherExecutor:
         self._doublecheck_hint_result = False
         # whether auto_where_hints should be generated
         self._auto_where_hints = True
+        # EXPERIEMENT feature
+        self._auto_node_jsondata_hints = True
+        node_ids = list(self._target_graph.nodes)
+        # EXPERIMENT feature. Array Indexer doesn't update data when nodes in graph are updated.
+        self._node_indexer = ArrayAttributeIndexer(
+            entity_ids=node_ids,
+            entity_attributes=[self._target_graph.nodes[nid] for nid in node_ids]
+        )
+
+    def create_node_indices(self, node_attribute_keys: list[str]):
+        self._node_indexer.create_indices(node_attribute_keys)
 
     def set_hints(self, hints=None):
         self._hints = hints
@@ -1102,12 +1134,24 @@ class GrandCypherExecutor:
         hinter = Hinter(_is_node_attr_match, _is_edge_attr_match)
         if self._hints:
             hints = self._hints
-        elif self._auto_where_hints:
-            indexer = ArrayAttributeIndexer(
-                entity_ids=list(self._target_graph.nodes()),
-                entity_attributes=list(self._target_graph.nodes[n] for n in self._target_graph.nodes))
-            indexer_condition_ast = to_indexer_ast(self._where_condition)
-            entity_domain = IndexerConditionRunner(indexer=indexer).find(indexer_condition_ast)
+        elif self._auto_where_hints or self._auto_node_jsondata_hints:
+            indexer = self._node_indexer
+            condition_asts = []
+            if self._auto_node_jsondata_hints:
+                condition_asts.append(motif_to_indexer_ast(self._motif))
+            if self._auto_where_hints:
+                condition_asts.append(to_indexer_ast(self._where_condition))
+
+            ast = condition_asts[0]
+            for c_ast in condition_asts:
+                if c_ast is None:
+                    continue
+                if ast is None:
+                    ast = c_ast
+                else:
+                    ast = IndexerAnd(ast, c_ast)
+
+            entity_domain = IndexerConditionRunner(indexer=indexer).find(ast)
             hints = hinter.index_domain_to_hints(entity_domain)
         else:
             hints = []
@@ -1609,12 +1653,31 @@ class GrandCypher:
         self._host_graph = host_graph
 
     @property
-    def _doublecheck_hint_result(self,):
-        return self._transformer._executors[0]._doublecheck_hint_result
+    def auto_node_jsondata_hints(self):
+        return self._transformer._executors[0]._auto_node_jsondata_hints
 
-    @_doublecheck_hint_result.setter
-    def _doublecheck_hint_result(self, value):
-        self._transformer._executors[0]._doublecheck_hint_result = value
+    @auto_node_jsondata_hints.setter
+    def auto_node_jsondata_hints(self, val: bool):
+        """(EXPERIMENT) set auto hint"""
+        self._transformer._executors[0]._auto_node_jsondata_hints = val
+
+    @property
+    def auto_where_hints(self):
+        return self._transformer._executors[0]._auto_where_hints
+
+    @auto_where_hints.setter
+    def auto_where_hints(self, val: bool):
+        """(EXPERIMENT) set auto hint"""
+        self._transformer._executors[0]._auto_where_hints = val
+
+    def create_node_indices(self, keys: list[str]) -> "GrandCypher":
+        """(EXPERIMENT) create node indices by keys
+        Arguments:
+            keys (list[str]): list of node keys to make indexes
+        Returns:
+            GrandCypher: The self GrandCypher
+        """
+        self._transformer._executors[0].create_node_indices(keys)
 
     def run(self, cypher: str, hints: Optional[List[dict]] = None) -> Dict[str, List]:
         """
@@ -1632,4 +1695,4 @@ class GrandCypher:
 
         """
         self._transformer.transform(_GrandCypherGrammar.parse(cypher), hints=hints)
-        return self._transformer._executors[-1].returns()
+        return self._transformer._executors[0].returns()

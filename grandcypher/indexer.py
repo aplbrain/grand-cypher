@@ -7,6 +7,7 @@ from typing import Any, Callable, Hashable, TypeVar, Union
 from bisect import bisect_left, bisect_right
 from cachetools import LRUCache
 
+
 T = TypeVar("T")
 U = TypeVar("U")
 
