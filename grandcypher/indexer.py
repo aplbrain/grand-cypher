@@ -12,9 +12,12 @@ U = TypeVar("U")
 
 
 IndexDomainType = dict[Hashable, list[Hashable]]
+IndexerConditionAST = Callable[["ArrayAttributeIndexer"], IndexDomainType]
 
 
 class IncrementIndexQuerier:
+    """This class takes in attribues sorted in ascending order and provide quick searching funtionality on it.
+    """
     def __init__(self, key: Any, indexed_entity_ids: list[T], indexed_entity_attributes: list[U]):
         self.key = key
         self.indexed_entity_ids: list[T] = indexed_entity_ids
@@ -78,6 +81,8 @@ class IncrementIndexQuerier:
 
 
 class NoIndexQuerier:
+    """This class assumes there is no ordering in the entity attributes and hence will do the full search
+    """
     def __init__(self, key: Any, indexed_entity_ids: list[T], indexed_entity_attributes: list[U]):
         self.key = key
         self.indexed_entity_ids: list[T] = indexed_entity_ids
@@ -124,8 +129,25 @@ class NoIndexQuerier:
 
 
 class ArrayAttributeIndexer:
+    """ArrayAttributeIndexer is an interface to create indexed attributes in ascending order.
 
-    """Indexer from array of attributes.
+    ArrayAttributeIndexer provide get_index_querier that will return either IncrementIndexQuerier
+    or NoIndexQuerier, both are compatible in term of funtionality. While IncrementIndexQuerier works
+    efficiently if attribute values are soreted in ascending order, NoIndexQuerier is less optimal
+    as it does full scan for searching.
+
+    ArrayAttributeIndexer will not have any update when attributes change their values.
+
+    Example:
+    >>> graph = nx.DiGraph()
+    >>> graph.add_node("A", weight=2, name="A")
+    >>> graph.add_node("B", weight=1, name="B")
+    >>> indexer = ArrayAttributeIndexer(entity_ids=list(graph.nodes.keys()), entity_attributes=list(graph.nodes.values()))
+    >>> indexer.create_indices(keys=["weight"])
+    >>> q1 = indexer.get_index_querier("weight")
+    >>> assert isinstance(q1,IncrementIndexQuerier)
+    >>> q2 = indexer.get_index_querier("name")
+    >>> assert isinstance(q2,NoIndexQuerier)
     """
     def __init__(self, entity_ids: list[T], entity_attributes: list[dict[str, U]]):
         self.entity_ids: list[T] = entity_ids
@@ -135,6 +157,9 @@ class ArrayAttributeIndexer:
         self._querier_cache = LRUCache(maxsize=4)
 
     def create_indices(self, keys: list[Any]):
+        """create indices on keys.
+        This will create indices on keys in entity_attributes.
+        """
         for key in keys:
             self._make_index(
                 entity_ids=self.entity_ids,
@@ -142,12 +167,13 @@ class ArrayAttributeIndexer:
                 key=key
             )
 
-    def _make_index(self, entity_ids: list[T], entity_attribute_values: list[U], key):
+    def _make_index(self, entity_ids: list[T], entity_attribute_values: list[U], key: Hashable):
         sorted_indices = sorted(list(range(len(entity_attribute_values))), key=lambda i: entity_attribute_values[i])
         self.indexed_entity_ids[key] = [entity_ids[i] for i in sorted_indices]
         self.indexed_entity_attributes[key] = [entity_attribute_values[i] for i in sorted_indices]
 
-    def get_index_querier(self, key) -> Union[IncrementIndexQuerier, NoIndexQuerier]:
+    def get_index_querier(self, key: Hashable) -> Union[IncrementIndexQuerier, NoIndexQuerier]:
+        """return IncrementIndexQuerier if key is indexed, else NoIndexQuerier"""
         if key not in self._querier_cache:
             if key not in self.indexed_entity_ids:
                 self._querier_cache[key] = NoIndexQuerier(
@@ -177,10 +203,6 @@ class AND:
     def __call__(self, indexer):
         ret_a = self._a(indexer)
         ret_b = self._b(indexer)
-        # if isinstance(self._a, SKIP):
-        #     return ret_b
-        # elif isinstance(self._b, SKIP):
-        #     return ret_a
         if ret_a is None:
             return ret_b
         elif ret_b is None:
@@ -236,19 +258,22 @@ class Compare:
 
 
 class UnsupportedOp:
+    """Unsupported Operator will return None upon being called"""
     def __init__(self, op, key, value):
         self._op = op
         self._key = key
         self._value = value
 
-    def __call__(self, *args, **kwds):
+    def __call__(self, indexer):
         return None
 
 
 class IndexerConditionRunner:
+    """interface to run Indexer Condition AST"""
     def __init__(self, indexer: ArrayAttributeIndexer):
         self._indexer = indexer
 
-    def find(self, condition_ast: Callable[[ArrayAttributeIndexer], dict[str, set]]) -> dict[str, set]:
+    def find(self, condition_ast: IndexerConditionAST) -> IndexDomainType:
+        """find entity domain (entity ids) given a Indexer Condition AST"""
         ret =  condition_ast(self._indexer)
         return ret

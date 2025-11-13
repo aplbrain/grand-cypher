@@ -1,3 +1,6 @@
+"""
+Group of classes and functions to deal with hint-related features
+"""
 from typing import Hashable, Optional
 import networkx as nx
 
@@ -64,7 +67,7 @@ class Hinter:
 
         return result
 
-    def index_domain_to_hints(self, result: IndexDomainType):
+    def index_domain_to_hints(self, result: IndexDomainType) -> list[HintType]:
         """cartesian products variables' values for possible combination"""
         if not result:
             return []

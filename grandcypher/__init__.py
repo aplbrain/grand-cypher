@@ -20,7 +20,7 @@ import grandiso
 from .hinter  import HintType, Hinter
 from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
-    AND as IndexerAnd, ArrayAttributeIndexer,
+    AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
 
 
@@ -47,6 +47,7 @@ compound_condition  : condition
 
 condition           : (entity_id | scalar_function) op entity_id_or_value
                     | (entity_id | scalar_function) op_list value_list
+                    | sub_query
                     | "not"i condition -> condition_not
 
 ?entity_id_or_value : entity_id
@@ -66,6 +67,13 @@ op                  : "==" -> op_eq
                     | "contains"i -> op_contains
                     | "starts with"i -> op_starts_with
                     | "ends with"i -> op_ends_with
+
+sub_op              : "EXISTS" -> subop_exist
+
+sub_query           : sub_op "{" sub_query_body "}"
+
+sub_query_body      : many_match_clause where_clause? return_clause?
+
 
 op_list             : "in"i -> op_in
 
@@ -166,6 +174,46 @@ _ALPHABET = string.ascii_lowercase + string.digits
 
 def shortuuid(k=4) -> str:
     return "".join(random.choices(_ALPHABET, k=k))
+
+
+class SUBOP:
+    pass
+
+
+class SUBOP_EXIST(SUBOP):
+
+    def __call__(self, match: dict, executor: "GrandCypherExecutor"):
+        executor.clear_matches()
+        # backup some settings
+        bk_hints = executor._hints
+        bk_run_without_return = executor.run_without_return
+        bk_limit = executor._limit
+        bk_doublecheck_hint = executor._doublecheck_hint_result
+        bk_auto_where_hints = executor._auto_where_hints
+        # settings such that it favor EXISTS operation
+        executor.set_hints([match])
+        # we don't need return, and we only need 1 row
+        executor.run_without_return = True
+        executor._limit = 1
+        executor._doublecheck_hint_result = True
+        executor._auto_where_hints = False
+        # run and ignore return
+        executor.returns()
+        # recover the settings
+        executor.set_hints(bk_hints)
+        executor.run_without_return = bk_run_without_return
+        executor._limit = bk_limit
+        executor._doublecheck_hint_result = bk_doublecheck_hint
+        executor._auto_where_hints = bk_auto_where_hints
+
+        if executor._matches:
+            return True
+        return False
+
+
+_SUB_OPERATORS = {
+    "EXISTS": SUBOP_EXIST
+}
 
 
 @lru_cache()
@@ -397,16 +445,20 @@ class CompoundCondition(Condition):
             else:
                 raise IndexError(f"Entity {actual_entity_name} not in match.")
         else:
-            # Regular entity attribute access
-            host_entity_id = self._entity_id.split(".")
-            if host_entity_id[0] in match:
-                host_entity_id[0] = match[host_entity_id[0]]
-            elif host_entity_id[0] in return_edges:
-                # looking for edge...
-                edge_mapping = return_edges[host_entity_id[0]]
-                host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
+            if isinstance(self._operator, SUBOP):
+                # SUBOP operator doesn't need a entity id.
+                pass
             else:
-                raise IndexError(f"Entity {host_entity_id} not in graph.")
+                # Regular entity attribute access
+                host_entity_id = self._entity_id.split(".")
+                if host_entity_id[0] in match:
+                    host_entity_id[0] = match[host_entity_id[0]]
+                elif host_entity_id[0] in return_edges:
+                    # looking for edge...
+                    edge_mapping = return_edges[host_entity_id[0]]
+                    host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
+                else:
+                    raise IndexError(f"Entity {host_entity_id} not in graph.")
 
             operator_results = []
             if isinstance(host, nx.MultiDiGraph):
@@ -421,7 +473,10 @@ class CompoundCondition(Condition):
                 val = any(operator_results)
             else:
                 try:
-                    val = self._operator(_get_entity_from_host(host, *host_entity_id), self._value)
+                    if isinstance(self._operator, SUBOP):
+                        val = self._operator(match, self._value)
+                    else:
+                        val = self._operator(_get_entity_from_host(host, *host_entity_id), self._value)
                 except:
                     val = False
 
@@ -489,7 +544,16 @@ NOT_WHERE_OPERATORS_TO_INDEXER_OPERATORS = {
 }
 
 
-def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_be=True):
+def create_node_indexer(target_graph: nx.DiGraph) -> ArrayAttributeIndexer:
+    """create indexer for graph nodes"""
+    indexer = ArrayAttributeIndexer(
+        entity_ids=list(target_graph.nodes()),
+        entity_attributes=list(target_graph.nodes[n] for n in target_graph.nodes))
+    return indexer
+
+
+def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_be=True) -> IndexerConditionAST:
+    """convert where condition to IndexerConditionAST which can be run with IndexerConditionRunner"""
     # for condition in condition:
     if isinstance(condition, CompoundCondition):
         return to_indexer_ast(condition=condition._operator,
@@ -519,7 +583,7 @@ def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_
     return IndexerUnsupportedOp(condition, entity_id, value)
 
 
-class _GrandCypherTransformer(Transformer):
+class GrandCypherExecutor:
     def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None):
         self._target_graph = target_graph
         self._entity2alias = dict()
@@ -541,15 +605,24 @@ class _GrandCypherTransformer(Transformer):
         self._skip = 0
         self._max_hop = 100
         self._hints: Optional[List[HintType]] = None
+        self._parent_executor: Optional["GrandCypherExecutor"] = None
+        self._child_executors: list["GrandCypherExecutor"] = []
+        # tell the executor not to check the return values
+        self.run_without_return = False
+        # level of subquery
+        self._level = 0
+        # tell the engine to double check hint related nodes and edges structure
+        # as they are ignored in grandiso
+        self._doublecheck_hint_result = False
+        # whether auto_where_hints should be generated
         self._auto_where_hints = True
 
     def set_hints(self, hints=None):
         self._hints = hints
         return self
 
-    def transform(self, tree, hints=None):
-        self.set_hints(hints)
-        return super().transform(tree)
+    def clear_matches(self):
+        self._matches = None
 
     def _lookup(self, data_paths: List[str], offset_limit) -> Dict[str, List]:
         def _filter_edge(edge, where_results):
@@ -561,7 +634,7 @@ class _GrandCypherTransformer(Transformer):
                 edge = {k: v for k, v in edge[0].items() if where_results[k] is True}
                 return [edge]
 
-        if not data_paths:
+        if not data_paths and not self.run_without_return:
             return {}
 
         motif_nodes = self._motif.nodes()
@@ -709,96 +782,8 @@ class _GrandCypherTransformer(Transformer):
 
         return result
 
-    def return_clause(self, clause):
-        # collect all entity identifiers to be returned
-        for item in clause:
-            if item:
-                alias = self._extract_alias(item)
-                item = item.children[0] if isinstance(item, Tree) else item
-                if isinstance(item, Tree) and item.data == "aggregation_function":
-                    func, entity = self._parse_aggregation_token(item)
-                    if alias:
-                        self._entity2alias[
-                            self._format_aggregation_key(func, entity)
-                        ] = alias
-                    self._aggregation_attributes.add(entity)
-                    self._aggregate_functions.append((func, entity))
-                else:
-                    if not isinstance(item, str):
-                        item = str(item.value)
-                    self._original_return_requests.add(item)
-
-                    if alias:
-                        self._entity2alias[item] = alias
-                    self._return_requests.append(item)
-
-        self._alias2entity.update({v: k for k, v in self._entity2alias.items()})
-
-    def _extract_alias(self, item: Tree):
-        """
-        Extract the alias from the return item (if it exists)
-        """
-
-        if len(item.children) == 1:
-            return None
-        item_keys = [it.data if isinstance(it, Tree) else None for it in item.children]
-        if any(k == "alias" for k in item_keys):
-            # get the index of the alias
-            alias_index = item_keys.index("alias")
-            return str(item.children[alias_index].children[0].value)
-
-        return None
-
-    def _parse_aggregation_token(self, item: Tree):
-        """
-        Parse the aggregation function token and return the function and entity
-            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Token('CNAME', 'r'), Tree('attribute_id', [Token('CNAME', 'value')])])
-            output: ('SUM', 'r.value')
-        """
-        func = str(item.children[0].value)  # AGGREGATE_FUNC
-        entity = str(item.children[1].value)
-        if len(item.children) > 2:
-            entity += "." + str(item.children[2].children[0].value)
-
-        return func, entity
-
     def _format_aggregation_key(self, func, entity):
         return f"{func}({entity})"
-
-    def order_clause(self, order_clause):
-        self._order_by = []
-        for item in order_clause[0].children:
-            if (
-                isinstance(item.children[0], Tree)
-                and item.children[0].data == "aggregation_function"
-            ):
-                func, entity = self._parse_aggregation_token(item.children[0])
-                field = self._format_aggregation_key(func, entity)
-                self._order_by_attributes.add(entity)
-            else:
-                field = str(
-                    item.children[0]
-                )  # assuming the field name is the first child
-                self._order_by_attributes.add(field)
-
-            # Default to 'ASC' if not specified
-            if len(item.children) > 1 and str(item.children[1].data).lower() != "desc":
-                direction = "ASC"
-            else:
-                direction = "DESC"
-
-            self._order_by.append((field, direction))  # [('n.age', 'DESC'), ...]
-
-    def distinct_return(self, distinct):
-        self._distinct = True
-
-    def limit_clause(self, limit):
-        limit = int(limit[-1])
-        self._limit = limit
-
-    def skip_clause(self, skip):
-        skip = int(skip[-1])
-        self._skip = skip
 
     def aggregate(self, func, results, entity, group_keys):
         # Collect data based on group keys
@@ -1078,6 +1063,7 @@ class _GrandCypherTransformer(Transformer):
 
                 # Collect all valid matches before applying pagination
                 for match in self._matches_iter(my_motif):
+
                     # Handle zero hop edges
                     valid_match = True
                     for a, b in zero_hop_edges:
@@ -1130,16 +1116,16 @@ class _GrandCypherTransformer(Transformer):
         iterators = []
         for c in nx.weakly_connected_components(motif):
             c_motif = motif.subgraph(c)
+            # NOTE: making sure only giving hints to "relevant" nodes.
             c_hints = hinter.take_hints_with_keys(hints, c)
             if self._auto_where_hints:
                 c_hints = hinter.eliminate_supersets(c_hints)
             grandiso_finder = grandiso.find_motifs_iter(
                 c_motif,
                 self._target_graph,
+                # is_node_structural_match=_is_node_structural_match,
                 is_node_attr_match=_is_node_attr_match,
                 is_edge_attr_match=_is_edge_attr_match,
-                # hints=self._hints if self._hints is not None else [],
-                # NOTE: making sure only giving hints to "relevant" nodes.
                 # Giving wrong hint will cause error
                 hints=c_hints ,
             )
@@ -1162,9 +1148,7 @@ class _GrandCypherTransformer(Transformer):
             for x, iterator in enumerate(iterators):
                 grandiso_finder, c_motif, c_hints = iterator
                 for match in grandiso_finder:
-                    # as hints are not checked against node and edge match in grandiso
-                    # let's do double check here
-                    if c_hints and not hinter.doublecheck(
+                    if self._doublecheck_hint_result and not hinter.doublecheck(
                         host=self._target_graph,
                         motif=c_motif,
                         match=match,
@@ -1255,6 +1239,123 @@ class _GrandCypherTransformer(Transformer):
                 new_motifs.append((motif, {**mapping_1, **mapping_2}))
         return new_motifs
 
+    def _is_limit(self, length):
+        """Check if the current number of results has reached the limit.
+
+        Args:
+            length: The current number of results.
+
+        Returns:
+            True if we've reached the limit, False otherwise.
+        """
+        return self._limit is not None and length >= self._limit
+
+
+class GrandCypherTransformer(Transformer):
+    def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None):
+        self._limit = limit
+        self._target_graph = target_graph
+        self._executors = [GrandCypherExecutor(target_graph, limit)]
+        self._match_clause_count = 0
+
+    def return_clause(self, clause):
+        # collect all entity identifiers to be returned
+
+        for item in clause:
+            if item:
+                alias = self._extract_alias(item)
+                item = item.children[0] if isinstance(item, Tree) else item
+                if isinstance(item, Tree) and item.data == "aggregation_function":
+                    func, entity = self._parse_aggregation_token(item)
+                    if alias:
+                        self._executors[-1]._entity2alias[
+                            self._executors[-1]._format_aggregation_key(func, entity)
+                        ] = alias
+                    self._executors[-1]._aggregation_attributes.add(entity)
+                    self._executors[-1]._aggregate_functions.append((func, entity))
+                else:
+                    if not isinstance(item, str):
+                        item = str(item.value)
+                    self._executors[-1]._original_return_requests.add(item)
+
+                    if alias:
+                        self._executors[-1]._entity2alias[item] = alias
+                    self._executors[-1]._return_requests.append(item)
+
+        self._executors[-1]._alias2entity.update({v: k for k, v in self._executors[-1]._entity2alias.items()})
+
+    def _parse_aggregation_token(self, item: Tree):
+        """
+        Parse the aggregation function token and return the function and entity
+            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Token('CNAME', 'r'), Tree('attribute_id', [Token('CNAME', 'value')])])
+            output: ('SUM', 'r.value')
+        """
+        func = str(item.children[0].value)  # AGGREGATE_FUNC
+        entity = str(item.children[1].value)
+        if len(item.children) > 2:
+            entity += "." + str(item.children[2].children[0].value)
+
+        return func, entity
+
+    def _extract_alias(self, item: Tree):
+        """
+        Extract the alias from the return item (if it exists)
+        """
+
+        if len(item.children) == 1:
+            return None
+        item_keys = [it.data if isinstance(it, Tree) else None for it in item.children]
+        if any(k == "alias" for k in item_keys):
+            # get the index of the alias
+            alias_index = item_keys.index("alias")
+            return str(item.children[alias_index].children[0].value)
+
+        return None
+
+    def set_hints(self, hints=None):
+        # self._hints = hints
+        self._executors[-1].set_hints(hints)
+        return self
+
+    def transform(self, tree, hints=None):
+        self.set_hints(hints)
+        return super().transform(tree)
+
+    def order_clause(self, order_clause):
+        self._executors[-1]._order_by = []
+        for item in order_clause[0].children:
+            if (
+                isinstance(item.children[0], Tree)
+                and item.children[0].data == "aggregation_function"
+            ):
+                func, entity = self._parse_aggregation_token(item.children[0])
+                field = self._executors[-1]._format_aggregation_key(func, entity)
+                self._executors[-1]._order_by_attributes.add(entity)
+            else:
+                field = str(
+                    item.children[0]
+                )  # assuming the field name is the first child
+                self._executors[-1]._order_by_attributes.add(field)
+
+            # Default to 'ASC' if not specified
+            if len(item.children) > 1 and str(item.children[1].data).lower() != "desc":
+                direction = "ASC"
+            else:
+                direction = "DESC"
+
+            self._executors[-1]._order_by.append((field, direction))  # [('n.age', 'DESC'), ...]
+
+    def distinct_return(self, distinct):
+        self._executors[-1]._distinct = True
+
+    def limit_clause(self, limit):
+        limit = int(limit[-1])
+        self._executors[-1]._limit = limit
+
+    def skip_clause(self, skip):
+        skip = int(skip[-1])
+        self._executors[-1]._skip = skip
+
     def entity_id(self, entity_id):
         if len(entity_id) == 2:
             return ".".join(entity_id)
@@ -1321,11 +1422,23 @@ class _GrandCypherTransformer(Transformer):
 
         return (cname, node_types, json_data)
 
+    def many_match_clause(self, many_match_clause):
+        self._match_clause_count += 1
+        return self
+
     def match_clause(self, match_clause: Tuple): # construct the motif
+        if self._match_clause_count == len(self._executors):
+            subquery_executor = GrandCypherExecutor(self._target_graph, self._limit)
+            parent_executor = self._executors[-1]
+            subquery_executor._parent_executor = parent_executor
+            subquery_executor._level = parent_executor._level + 1
+            self._executors[-1]._child_executors.append(subquery_executor)
+            self._executors.append(subquery_executor)
+
         if len(match_clause) == 1:
             # This is just a node match:
             u, ut, js = match_clause[0]
-            self._motif.add_node(u.value, __labels__=ut, **js)
+            self._executors[-1]._motif.add_node(u.value, __labels__=ut, **js)
             return
 
         match_clause = match_clause[1:] if not match_clause[0] else match_clause
@@ -1350,27 +1463,28 @@ class _GrandCypherTransformer(Transformer):
                 raise ValueError(f"Not support direction d={d!r}")
 
             if g:
-                self._return_edges[g.value] = edges[0]
+                self._executors[-1]._return_edges[g.value] = edges[0]
 
             ish = minh is None and maxh is None
             minh = minh if minh is not None else 1
             maxh = maxh if maxh is not None else minh + 1
-            if maxh > self._max_hop:
+            if maxh > self._executors[-1]._max_hop:
                 raise ValueError(f"max hop is caped at 100, found {maxh}!")
             if t:
                 t = set([t] if type(t) is str else t)
-            self._motif.add_edges_from(
+            self._executors[-1]._motif.add_edges_from(
                 edges, __min_hop__=minh, __max_hop__=maxh, __is_hop__=ish, __labels__=t
             )
 
-            self._motif.add_node(u, __labels__=ut, **ujs)
-            self._motif.add_node(v, __labels__=vt, **vjs)
+            self._executors[-1]._motif.add_node(u, __labels__=ut, **ujs)
+            self._executors[-1]._motif.add_node(v, __labels__=vt, **vjs)
 
     def path_clause(self, path_clause: tuple):
-        self._paths.append(path_clause[0])
+        self._executors[-1]._paths.append(path_clause[0])
+        return
 
     def where_clause(self, where_clause: tuple):
-        self._where_condition = where_clause[0]
+        self._executors[-1]._where_condition = where_clause[0]
 
     def compound_condition(self, val):
         if len(val) == 1:
@@ -1387,6 +1501,9 @@ class _GrandCypherTransformer(Transformer):
         return _BOOL_ARI["or"]
 
     def condition(self, condition):
+        if len(condition) == 1:  # sub query
+            condition = condition[0]
+
         if len(condition) == 3:
             (entity_id, operator, value) = condition
             return (True, entity_id, operator, value)
@@ -1447,6 +1564,15 @@ class _GrandCypherTransformer(Transformer):
     def op_ends_with(self, _):
         return _OPERATORS["ends_with"]
 
+    def subop_exist(self, val):
+        return _SUB_OPERATORS["EXISTS"]()
+
+    def sub_query(self, items):
+        executor = self._executors.pop()
+        self._match_clause_count -= 1
+        # return entity_id = "" to match with other condition
+        return ["", items[0], executor]
+
     def json_dict(self, tup):
         constraints = {}
         for key, value in tup:
@@ -1455,17 +1581,6 @@ class _GrandCypherTransformer(Transformer):
 
     def json_rule(self, rule):
         return (rule[0].value, rule[1])
-
-    def _is_limit(self, length):
-        """Check if the current number of results has reached the limit.
-
-        Args:
-            length: The current number of results.
-
-        Returns:
-            True if we've reached the limit, False otherwise.
-        """
-        return self._limit is not None and length >= self._limit
 
 
 class GrandCypher:
@@ -1490,8 +1605,16 @@ class GrandCypher:
 
         """
 
-        self._transformer = _GrandCypherTransformer(host_graph, limit)
+        self._transformer = GrandCypherTransformer(host_graph, limit)
         self._host_graph = host_graph
+
+    @property
+    def _doublecheck_hint_result(self,):
+        return self._transformer._executors[0]._doublecheck_hint_result
+
+    @_doublecheck_hint_result.setter
+    def _doublecheck_hint_result(self, value):
+        self._transformer._executors[0]._doublecheck_hint_result = value
 
     def run(self, cypher: str, hints: Optional[List[dict]] = None) -> Dict[str, List]:
         """
@@ -1509,4 +1632,4 @@ class GrandCypher:
 
         """
         self._transformer.transform(_GrandCypherGrammar.parse(cypher), hints=hints)
-        return self._transformer.returns()
+        return self._transformer._executors[-1].returns()

@@ -119,3 +119,55 @@ class TestHints:
         gc = GrandCypher(host)
         res = gc.run(qry, hints=[{"A": 1, "B": 2}, {"A": 3, "B": 4}])
         assert res == {"A.name": ["Home", "School"], "B.name": ["Work", "Library"]}
+
+
+class TestWrongHints:
+    def test_wrong_edge_match_hint(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+        host.add_edge("x", "y", __labels__={"XY"}, name="XY")
+        host.add_edge("x", "z", __labels__={"XZ"}, name="XZ")
+
+        qry = """
+        MATCH (A) -[:XY]-> (B)
+        RETURN ID(A), ID(B)
+        """
+
+        gc = GrandCypher(host)
+        gc._doublecheck_hint_result = True
+        res = gc.run(qry, hints=[{"A": "x", "B": "z"}])
+        assert res == {'ID(A)': [], 'ID(B)': []}
+
+
+    def test_wrong_node_match_hint(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+        host.add_node("z", name="z")
+        host.add_edge("x", "y", __labels__={"XY"}, name="XY")
+        host.add_edge("x", "z", __labels__={"XZ"}, name="XZ")
+
+        qry = """
+        MATCH (A {name: "y"}) --> (B)
+        RETURN ID(A), ID(B)
+        """
+        gc = GrandCypher(host)
+        gc._doublecheck_hint_result = True
+        res = gc.run(qry, hints=[{"A": "x", "B": "z"}])
+        assert res == {'ID(A)': [], 'ID(B)': []}
+
+    def test_mising_edge_hint(self):
+        host = nx.DiGraph()
+        host.add_node("x", name="x")
+        host.add_node("y", name="y")
+
+        qry = """
+        MATCH (A) --> (B)
+        RETURN ID(A), ID(B)
+        """
+        gc = GrandCypher(host)
+        gc._doublecheck_hint_result = True
+        res = gc.run(qry, hints=[{"A": "x", "B": "y"}])
+        assert res == {'ID(A)': [], 'ID(B)': []}
