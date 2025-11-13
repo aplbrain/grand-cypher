@@ -1,6 +1,6 @@
 import pytest
 from .indexer import (
-    SKIP, AND, OR, Compare, IndexerConditionRunner, NoIndexQuerier, ArrayAttributeIndexer, 
+    SKIP, AND, OR, Compare, IndexerConditionRunner, NoIndexQuerier, ArrayAttributeIndexer,
     IncrementIndexQuerier)
 
 
