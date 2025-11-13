@@ -1086,8 +1086,13 @@ class GrandCypherExecutor:
         if not self._matches:
             self_matches = []
             self_matche_paths = []
+            complete = False
 
             for my_motif, edge_hop_map in self._edge_hop_motifs(self._motif):
+                # Iteration is complete
+                if complete:
+                    break
+
                 # Process zero hop edges
                 zero_hop_edges = [
                     k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]
@@ -1125,6 +1130,11 @@ class GrandCypherExecutor:
                     self_matches.append((match, where_results))
                     self_matche_paths.append(edge_hop_map)
 
+                    # Check if limit reached; stop ONLY IF we are not ordering
+                    if self._is_limit(len(self_matches)) and not self._order_by:
+                        complete = True
+                        break
+
             self._matches = self_matches
             self._matche_paths = self_matche_paths
 
@@ -1137,7 +1147,7 @@ class GrandCypherExecutor:
         elif self._auto_where_hints or self._auto_node_jsondata_hints:
             indexer = self._node_indexer
             condition_asts = []
-            if self._auto_node_jsondata_hints:
+            if self._auto_node_jsondata_hints and hasattr(self._target_graph, "pred"):
                 condition_asts.append(motif_to_indexer_ast(self._motif))
             if self._auto_where_hints:
                 condition_asts.append(to_indexer_ast(self._where_condition))
@@ -1292,7 +1302,7 @@ class GrandCypherExecutor:
         Returns:
             True if we've reached the limit, False otherwise.
         """
-        return self._limit is not None and length >= self._limit
+        return self._limit is not None and length >= (self._limit + self._skip)
 
 
 class GrandCypherTransformer(Transformer):
