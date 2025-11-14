@@ -1758,6 +1758,45 @@ class TestType:
 
     @pytest.mark.benchmark
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_node_type_edge_zero_hop_complex(self, graph_type):
+        host = graph_type()
+        host.add_node("b1", __labels__=set(["batch"]))
+        host.add_node("u0", __labels__=set(["upgrade"]), foo="0")
+        host.add_node("u1", __labels__=set(["upgrade"]), foo="1")
+        host.add_node("u2", __labels__=set(["upgrade"]), foo="2")
+        host.add_node("u3", __labels__=set(["upgrade"]), foo="3")
+        host.add_edge("b1", "u0", __labels__=set(["contain"]))
+        host.add_edge("b1", "u1", __labels__=set(["contain"]))
+        host.add_edge("b1", "u2", __labels__=set(["contain"]))
+        host.add_edge("b1", "u3", __labels__=set(["contain"]))
+        host.add_edge("u1", "u2", __labels__=set(["dependent"]))
+
+        host.add_node("b2", __labels__=set(["batch"]))
+        host.add_node("u4", __labels__=set(["upgrade"]), foo="4")
+        host.add_edge("b2", "u4", __labels__=set(["contain"]))
+
+        host.add_edge("u1", "u4", __labels__=set(["conflict"]))
+        host.add_edge("u3", "u4", __labels__=set(["conflict"]))
+
+        qry = """
+        MATCH (U1:upgrade)-[:conflict]->(U2:upgrade)
+        MATCH (U1:upgrade)-[:dependent*0..3]->(U3:upgrade)
+
+        match (B1:batch) -[:contain]->(U1:upgrade)
+        match (B1:batch) -[:contain]->(U3:upgrade)
+
+        match (B2:batch) -[:contain]->(U2:upgrade)
+        RETURN ID(U1), ID(U3)
+        """
+
+        gc = GrandCypher(host)
+        res = gc.run(qry)
+        assert len(res) == 2
+        assert res["ID(U1)"] == ["u1", "u3", "u1"]
+        assert res["ID(U3)"] == ["u1", "u3", "u2"]
+
+    @pytest.mark.benchmark
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_node_type_edge_hop(self, graph_type):
         host = graph_type()
         host.add_node("x", __labels__=set(["Node", "X"]), foo="1")
@@ -1794,8 +1833,8 @@ class TestType:
 
         res = GrandCypher(host).run(qry)
         assert len(res) == 2
-        assert res["ID(A)"] == ["x", "x"]
-        assert res["ID(B)"] == ["x", "z"]
+        assert res["ID(A)"] == ["x", "z", "x"]
+        assert res["ID(B)"] == ["x", "z", "z"]
 
 
 class TestSpecialCases:
