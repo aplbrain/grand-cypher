@@ -22,6 +22,7 @@ from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
     AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
+from .struct import UnionFind
 
 
 _GrandCypherGrammar = Lark(
@@ -602,6 +603,60 @@ def motif_to_indexer_ast(motif: nx.DiGraph) -> IndexerConditionAST:
                     IndexerCompare("==", k, v)
                 )
     return ast
+
+
+def unify_zero_hop_nodes(motif: nx.DiGraph, paths: list[dict[tuple, tuple]]) -> nx.DiGraph:
+    """
+    Collapse nodes connected by zero-hop edges in a motif graph.
+
+    Zero-hop edges are edges where the start and end of the path are the same:
+        path[0] == path[-1]
+
+    Args:
+        motif (nx.DiGraph): The motif graph to unify.
+        paths (dict[tuple, tuple]): Mapping from edge (u,v) to expanded path (tuple of nodes),
+                                    e.g., {(u,v): (u, u)} for zero-hop edges.
+
+    Returns:
+        nx.DiGraph: A new motif graph where nodes connected by zero-hop edges
+                    are collapsed into a single representative node.
+                    Node attributes are merged.
+    """
+    uf = UnionFind()
+
+    for (u1, v1), path in paths.items():
+        if len(path) < 2 or path[0] != path[-1]:
+            continue
+        uf.union(u1, v1)
+
+    if not uf.parent:
+        return motif
+
+    # 2. Build alias mapping
+    alias = {n: uf.find(n) for n in motif.nodes()}
+
+    # 3. Create unified motif graph
+    unified = nx.DiGraph()
+
+    # Merge node attributes
+    merged_attrs = {}
+    for n, attrs in motif.nodes(data=True):
+        rep = alias[n]
+        if rep not in merged_attrs:
+            merged_attrs[rep] = dict(attrs)
+        else:
+            merged_attrs[rep].update(attrs)
+
+    for rep, attrs in merged_attrs.items():
+        unified.add_node(rep, **attrs)
+
+    # 4. Rewrite edges (skip zero-hop edges)
+    for u, v, attrs in motif.edges(data=True):
+        u2, v2 = alias[u], alias[v]
+        unified.add_edge(u2, v2, **attrs)
+
+    return unified
+
 
 
 class GrandCypherExecutor:
@@ -1260,6 +1315,8 @@ class GrandCypherExecutor:
             if min_hop == 0:
                 new_motif = nx.MultiDiGraph()
                 new_motif.add_node(u, **motif.nodes[u])
+                # add node v to the motif so we can collapse it later
+                new_motif.add_node(v, **motif.nodes[v])
                 new_motifs.append((new_motif, {(u, v): (u, u)}))
             elif min_hop >= 1:
                 for _ in range(1, min_hop):
@@ -1275,6 +1332,8 @@ class GrandCypherExecutor:
                 new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
                 hops.append(shortuuid())
             motifs = self._product_motifs(motifs, new_motifs)
+        # based on paths, collapse nodes with 0 edge hop together
+        motifs = [(unify_zero_hop_nodes(motif, paths), paths) for motif, paths in motifs]
         return motifs
 
     def _product_motifs(
