@@ -185,14 +185,14 @@ def host_graph():
 
 @pytest.fixture
 def motif_simple():
-    G = nx.MultiDiGraph()
+    G = nx.DiGraph()
     G.add_node("A", __labels__={"Person"}, age=30)
     return G
 
 
 @pytest.fixture
 def motif_with_edge():
-    G = nx.MultiDiGraph()
+    G = nx.DiGraph()
     G.add_node("A", __labels__={"Person"})
     G.add_node("B", __labels__={"Person"})
     G.add_edge("A", "B", __labels__={"KNOWS"}, weight=3)
@@ -201,7 +201,7 @@ def motif_with_edge():
 
 @pytest.fixture
 def motif_wrong_edge_label():
-    G = nx.MultiDiGraph()
+    G = nx.DiGraph()
     G.add_node("A", __labels__={"Person"})
     G.add_node("B", __labels__={"Person"})
     G.add_edge("A", "B", __labels__={"FRIEND"}, weight=3)  # mismatch
@@ -254,7 +254,7 @@ def test_doublecheck_edge_label_fail(hinter, host_graph, motif_wrong_edge_label)
 
 def test_doublecheck_edge_attr_fail(hinter: Hinter, host_graph):
     """Edge attribute mismatch -> fails"""
-    motif = nx.MultiDiGraph()
+    motif = nx.DiGraph()
     motif.add_node("A", __labels__={"Person"})
     motif.add_node("B", __labels__={"Person"})
 

@@ -74,7 +74,7 @@ class TestEdgeAttrMatch:
         _is_edge_attr_match.cache_clear()
 
     def test_basic_edge_match(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", color="red")
@@ -83,7 +83,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is True
 
     def test_basic_edge_mismatch(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", weight=5)
@@ -92,7 +92,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is False
 
     def test_edge_missing_in_host(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", color="red")
@@ -101,7 +101,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is False
 
     def test_labels_match(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", __labels__={"KNOWS"})
@@ -110,7 +110,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is True
 
     def test_labels_do_not_match(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", __labels__={"LIKES"})
@@ -119,7 +119,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is False
 
     def test_multiple_edges_any_match(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", color="red")
@@ -129,7 +129,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is True
 
     def test_multiple_edges_no_match(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", weight=100)
@@ -140,7 +140,7 @@ class TestEdgeAttrMatch:
         assert _is_edge_attr_match(("A", "B"), ("H1", "H2"), motif, host) is False
 
     def test_empty_labels_ignored(self):
-        motif = nx.MultiDiGraph()
+        motif = nx.DiGraph()
         host = nx.MultiDiGraph()
 
         motif.add_edge("A", "B", __labels__=set(), color="red")
