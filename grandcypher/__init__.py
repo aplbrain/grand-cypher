@@ -7,12 +7,13 @@ to search in a much larger graph database.
 
 """
 
-from typing import Any, Dict, Hashable, List, Callable, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Hashable, List, Callable, Optional, Tuple, Union
 from collections import OrderedDict
 import random
 import string
 from functools import lru_cache
 import networkx as nx
+from grandcypher.struct import generate_edge_hop_specs, generate_hop_assignments, materialize_motif
 from lark import Lark, Transformer, v_args, Token, Tree
 from itertools import product
 
@@ -1254,7 +1255,7 @@ class GrandCypherExecutor:
                     join = match
             yield from join
 
-    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> List[Tuple[nx.Graph, dict]]:
+    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> Generator[Tuple[nx.Graph, dict]]:
         """generate a list of edge-hop-expanded motif with edge-hop-map.
 
         Arguments:
@@ -1266,63 +1267,11 @@ class GrandCypherExecutor:
                 where a real edge path can have more than 2 element (hop >= 2)
                 or it can have 2 same element (hop = 0).
         """
-        new_motif = nx.MultiDiGraph()
-        for n in motif.nodes:
-            if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
-                new_motif.add_node(n, **motif.nodes[n])
-        motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
-
-        if motif.is_multigraph():
-            edge_iter = motif.edges(keys=True)
-        else:
-            edge_iter = motif.edges(keys=False)
-
-        for edge in edge_iter:
-            if motif.is_multigraph():
-                u, v, k = edge
-            else:
-                u, v = edge
-                k = 0  # Dummy key for DiGraph
-            new_motifs = []
-            min_hop = motif.edges[u, v, k]["__min_hop__"]
-            max_hop = motif.edges[u, v, k]["__max_hop__"]
-            edge_type = motif.edges[u, v, k]["__labels__"]
-            hops = []
-            if min_hop == 0:
-                new_motif = nx.MultiDiGraph()
-                new_motif.add_node(u, **motif.nodes[u])
-                new_motifs.append((new_motif, {(u, v): (u, u)}))
-            elif min_hop >= 1:
-                for _ in range(1, min_hop):
-                    hops.append(shortuuid())
-            for _ in range(max(min_hop, 1), max_hop):
-                new_edges = [u] + hops + [v]
-                new_motif = nx.MultiDiGraph()
-                new_motif.add_edges_from(
-                    zip(new_edges, new_edges[1:]), __labels__=edge_type
-                )
-                new_motif.add_node(u, **motif.nodes[u])
-                new_motif.add_node(v, **motif.nodes[v])
-                new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
-                hops.append(shortuuid())
-            motifs = self._product_motifs(motifs, new_motifs)
-        return motifs
-
-    def _product_motifs(
-        self,
-        motifs_1: List[Tuple[nx.Graph, dict]],
-        motifs_2: List[Tuple[nx.Graph, dict]],
-    ):
-        new_motifs = []
-        for motif_1, mapping_1 in motifs_1:
-            for motif_2, mapping_2 in motifs_2:
-                motif = nx.DiGraph()
-                motif.add_nodes_from(motif_1.nodes.data())
-                motif.add_nodes_from(motif_2.nodes.data())
-                motif.add_edges_from(motif_1.edges.data())
-                motif.add_edges_from(motif_2.edges.data())
-                new_motifs.append((motif, {**mapping_1, **mapping_2}))
-        return new_motifs
+        hop_specs = generate_edge_hop_specs(motif)
+        hop_assignments = list(generate_hop_assignments(hop_specs))
+        for hop_assignment in hop_assignments:
+            my_motif = materialize_motif(hop_assignment, motif)
+            yield my_motif, {k: v.nodes for k, v in hop_assignment.items()}
 
     def _is_limit(self, length):
         """Check if the current number of results has reached the limit.

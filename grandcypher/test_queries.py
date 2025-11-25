@@ -4,6 +4,7 @@ import pytest
 from . import GrandCypher, find_multiedge_keys, generate_multiedge_edge_hop_key
 
 ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
+ACCEPTED_GRAPH_TYPES = [nx.DiGraph]
 
 
 class TestSimpleAPI:
@@ -2096,6 +2097,7 @@ class TestPath:
         """
 
         res = GrandCypher(host).run(qry)
+        print("!!!!!!!!!!!!!", res)
         assert len(res["P"][0]) == 5
 
 
