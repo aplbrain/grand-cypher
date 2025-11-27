@@ -1,10 +1,10 @@
 import networkx as nx
+from grandcypher.struct import EdgeHopKey, EdgeWithKey, HopAssignment, HopSpec, Match
 import pytest
 
-from . import GrandCypher, find_multiedge_keys, generate_multiedge_edge_hop_key
+from . import GrandCypher, find_multiedge_keys, generate_multiedge_edge_hop_key, get_edge_from_host
 
 ACCEPTED_GRAPH_TYPES = [nx.MultiDiGraph, nx.DiGraph]
-ACCEPTED_GRAPH_TYPES = [nx.DiGraph]
 
 
 class TestSimpleAPI:
@@ -2521,19 +2521,21 @@ class TestReturnFullNodeAttributes:
 
 def test_generate_multiedge_edge_hop_key():
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
+    edge_hop_map = {k: HopSpec(map_key=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
     multi_edge_keys = {("A", "B"): [1, 2], ("B", "C"): [3, 4], ("D", "D"): [-1], ("F", "G"): [None]}
 
     assert list(generate_multiedge_edge_hop_key(edge_hop_map, multi_edge_keys)) == [
-        {("A", "C"): (1, 3), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-        {("A", "C"): (1, 4), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-        {("A", "C"): (2, 3), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-        {("A", "C"): (2, 4), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
+        [EdgeHopKey(map_key=("A", "C"), keys=(1, 3)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
+        [EdgeHopKey(map_key=("A", "C"), keys=(1, 4)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
+        [EdgeHopKey(map_key=("A", "C"), keys=(2, 3)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
+        [EdgeHopKey(map_key=("A", "C"), keys=(2, 4)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
     ]
 
 
 def test_find_multiedge_keys_multidigraph():
     match = {"A": "a", "B": "b", "C": "c", "D": "d", "F": "f", "G": "g"}
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D")}
+    edge_hop_map = {k: HopSpec(map_key=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
     host = nx.MultiDiGraph()
     host.add_edge("a", "b", key=1)
     host.add_edge("a", "b", key=2)
@@ -2549,6 +2551,7 @@ def test_find_multiedge_keys_multidigraph():
 def test_find_multiedge_keys_digraph():
     match = {"A": "a", "B": "b", "C": "c", "D": "d", "F": "f", "G": "g", "F": "f", "G": "g"}
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
+    edge_hop_map = {k: HopSpec(map_key=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
     host = nx.DiGraph()
     host.add_edge("a", "b", key=1)
     host.add_edge("a", "b", key=2)
@@ -2563,47 +2566,94 @@ def test_find_multiedge_keys_digraph():
     }
 
 
+class TestGetEdgeFromHost:
+    def test_no_edges_found_returns_empty_list(self):
+        g = nx.DiGraph()
+        result = get_edge_from_host(
+            g,
+            [EdgeWithKey("A", "B", None, 1)]
+        )
+        assert result == []
 
 
-def test_generate_multiedge_edge_hop_key():
-    edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
-    multi_edge_keys = {("A", "B"): [1, 2], ("B", "C"): [3, 4], ("D", "D"): [-1], ("F", "G"): [None]}
+    def test_single_edge_digraph_returns_full_dict(self):
+        g = nx.DiGraph()
+        g.add_edge("A", "B", weight=5)
 
-    assert list(generate_multiedge_edge_hop_key(edge_hop_map, multi_edge_keys)) == [
-        {("A", "C"): (1, 3), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-        {("A", "C"): (1, 4), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-        {("A", "C"): (2, 3), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-        {("A", "C"): (2, 4), ("D", "E"): tuple(), ("F", "G"): (None,)}, 
-    ]
+        result = get_edge_from_host(
+            g,
+            [EdgeWithKey("A", "B", None, 1)]
+        )
 
-
-def test_find_multiedge_keys_multidigraph():
-    match = {"A": "a", "B": "b", "C": "c", "D": "d", "F": "f", "G": "g"}
-    edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D")}
-    host = nx.MultiDiGraph()
-    host.add_edge("a", "b", key=1)
-    host.add_edge("a", "b", key=2)
-    host.add_edge("b", "c", key=3)
-    host.add_edge("b", "c", key=4)
-    host.add_edge("d", "e", key=5)
-
-    assert find_multiedge_keys(host, match, edge_hop_map) == {
-        ("A", "B"): [1, 2], ("B", "C"): [3, 4], ("D", "D"): [-1]
-    }
+        assert result == {"weight": 5}
 
 
-def test_find_multiedge_keys_digraph():
-    match = {"A": "a", "B": "b", "C": "c", "D": "d", "F": "f", "G": "g", "F": "f", "G": "g"}
-    edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
-    host = nx.DiGraph()
-    host.add_edge("a", "b", key=1)
-    host.add_edge("a", "b", key=2)
-    host.add_edge("b", "c", key=3)
-    host.add_edge("b", "c", key=4)
-    host.add_edge("d", "e", key=5)
-    host.add_edge("f", "g", key=6)
+    def test_single_edge_digraph_with_attribute(self):
+        g = nx.DiGraph()
+        g.add_edge("A", "B", cost=9)
 
-    assert find_multiedge_keys(host, match, edge_hop_map) == {
-        ("A", "B"): [None], ("B", "C"): [None], 
-        ("D", "D"): [-1], ("F", "G"): [None]
-    }
+        result = get_edge_from_host(
+            g,
+            [EdgeWithKey("A", "B", None, 1)],
+            entity_attribute="cost"
+        )
+
+        assert result == 9
+
+
+    def test_single_edge_digraph_attribute_missing_returns_none(self):
+        g = nx.DiGraph()
+        g.add_edge("A", "B", weight=10)
+
+        result = get_edge_from_host(
+            g,
+            [EdgeWithKey("A", "B", None, 1)],
+            entity_attribute="unknown"
+        )
+
+        assert result is None
+
+
+    def test_multiple_edges_multidigraph_list_returned(self):
+        g = nx.MultiDiGraph()
+        g.add_edge("A", "B", key=0, w=1)
+        g.add_edge("A", "B", key=1, w=2)
+
+        edges = [
+            EdgeWithKey("A", "B", 0, 1),
+            EdgeWithKey("A", "B", 1, 1)
+        ]
+
+        result = get_edge_from_host(g, edges)
+
+        assert isinstance(result, list)
+        assert {"w": 1} in result
+        assert {"w": 2} in result
+        assert len(result) == 2
+
+
+    def test_multiple_edges_attribute_access_raises_typeerror(self):
+        g = nx.MultiDiGraph()
+        g.add_edge("A", "B", key=0, w=1)
+        g.add_edge("A", "B", key=1, w=2)
+
+        edges = [
+            EdgeWithKey("A", "B", 0, 1),
+            EdgeWithKey("A", "B", 1, 1)
+        ]
+
+        with pytest.raises(TypeError):
+            get_edge_from_host(g, edges, entity_attribute="w")
+
+
+    def test_multidigraph_correct_key_lookup(self):
+        g = nx.MultiDiGraph()
+        g.add_edge("X", "Y", key=10, value="correct")
+        g.add_edge("X", "Y", key=11, value="wrong")
+
+        result = get_edge_from_host(
+            g,
+            [EdgeWithKey("X", "Y", 10, 1)]
+        )
+
+        assert result == {"value": "correct"}

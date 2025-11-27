@@ -1,22 +1,36 @@
-from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, Iterable, List, Tuple, Union
+from typing import Any, Dict, Generator, List, Tuple, Union, Dict, Optional, Hashable
 import itertools
 import networkx as nx
 import uuid
+from functools import cached_property
+from dataclasses import dataclass
 
 
-MotifNode = Any
-MotifEdgeKey = Union[int, str]
-MapKey = Union[Tuple[Any, Any], Tuple[Any, Any, Any]]   # (u,v) or (u,v,k)
+NodeID = Union[str, Hashable]
+EdgeID = Tuple[NodeID, NodeID]
+NodeMapping = Dict[NodeID, NodeID]
+MotifNode = NodeID
+MapKey = EdgeID
 
 
-# @dataclass(frozen=True)
-# class HopSpec:
-#     """Represents one expansion option for one motif edge."""
-#     map_key: MapKey
-#     nodes: Tuple[MotifNode, ...]  # hop sequence: (u, u) or (u,v) or (u,x1,...,v)
-#     labels: Any                   # __labels__ attribute
+@dataclass(frozen=True)
+class EdgeHopKey:
+    # TODO: what is map_key?
+    map_key: MapKey
+    keys: tuple[int, ...]
+
+
+HopKeyAssignment = Dict[MapKey, EdgeHopKey]
+
+
+@dataclass(frozen=True)
+class EdgeWithKey:
+    u: str
+    v: str
+    k: int  # multi key
+    h: int  # hop info
+
 
 
 @dataclass(frozen=True)
@@ -24,12 +38,10 @@ class HopSpec:
     """Represents one expansion option for one motif edge."""
     map_key: MapKey
     nodes: Tuple[Any, ...]   # (u,u) or (u,v) or (u,x1,x2,v)
-    labels: Any
     hop_count: int
 
 
 HopAssignment = Dict[MapKey, HopSpec]
-
 
 
 def generate_edge_hop_specs(motif: nx.DiGraph) -> list[list[HopSpec]]:
@@ -55,10 +67,9 @@ def generate_edge_hop_specs(motif: nx.DiGraph) -> list[list[HopSpec]]:
             meta = motif.edges[u, v]
         min_hop = int(meta.get("__min_hop__", 1))
         max_hop = int(meta.get("__max_hop__", min_hop))
-        labels = meta["__labels__"]
 
         hop_specs = _enumerate_hops(
-            map_key, u, v, labels, min_hop, max_hop
+            map_key, u, v, min_hop, max_hop
         )
         all_edges.append(hop_specs)
 
@@ -99,10 +110,22 @@ def materialize_motif(hop_assignment: Dict[MapKey, HopSpec], motif: nx.DiGraph) 
         new_nodes.update(nodes)
         if hs.hop_count == 0:
             continue
+        A, B = hs.map_key
+        if motif.is_multigraph():
+            motif_edge_data = motif.get_edge_data(A, B) or {}
+            if motif_edge_data:
+                motif_edge_data = next(iter(motif_edge_data.values()))
+        else:
+            motif_edge_data = motif.get_edge_data(A, B) or {}
+        motif_edge_data = {k: v for k, v in motif_edge_data.items() if k not in (
+            "__min_hop__", "__max_hop__", "__is_hop__"
+        )}
+        if "__labels__" not in motif_edge_data:
+            motif_edge_data["__labels__"] = set()
         for a, b in zip(nodes[:-1], nodes[1:]):
-            g.add_edge(a, b, __labels__=hs.labels)
+            g.add_edge(a, b, **motif_edge_data)
 
-    # Add nodes, including single nodes with no edges
+    # Add nodes attributes
     for n in new_nodes:
         if n not in motif.nodes:
             continue
@@ -118,10 +141,9 @@ def _enumerate_hops(
     map_key: MapKey,
     u: MotifNode,
     v: MotifNode,
-    labels: Any,
     min_hop: int,
     max_hop: int,
-) -> Tuple[List[HopSpec], int]:
+) -> List[HopSpec]:
     """
     Generate all HopSpecs for a single motif edge.
     """
@@ -130,7 +152,7 @@ def _enumerate_hops(
 
     # --- Case A: zero-hop allowed (u→u)
     if min_hop == 0:
-        hop_specs.append(HopSpec(map_key, (u, u), labels, hop_count=0))
+        hop_specs.append(HopSpec(map_key, (u, u), hop_count=0))
 
     intermediates = []
     # --- Case B: hops from 1 to max_hop
@@ -140,7 +162,227 @@ def _enumerate_hops(
     for hop_count in range(1, max_hop):
         if hop_count >= min_hop:
             nodes = tuple([u] + intermediates + [v])
-            hop_specs.append(HopSpec(map_key, nodes, labels, hop_count=hop_count))
+            hop_specs.append(HopSpec(map_key, nodes, hop_count=hop_count))
         intermediates.append(_new_hop_id())
 
     return hop_specs
+
+
+@dataclass(frozen=True)
+class EdgePath:
+    """
+    Represents a fully expanded edge-path in the host graph corresponding to a
+    single motif edge after hop-expansion.
+
+    Parameters
+    ----------
+    nodes : list[str]
+        The ordered list of host node names that form the expanded path.
+        Example: ['a', 'x1', 'x2', 'b']
+
+    keys : list[int]
+        The multiedge keys for each hop along the path. `keys[i]` corresponds to
+        the hop (nodes[i] -> nodes[i+1]). Keys may be empty if the host graph
+        is a `DiGraph` or if no valid key exists.
+
+    hop_count : int
+        The number of hops in the expanded motif edge (len(nodes) - 1).
+
+    Iteration
+    ---------
+    Iterating over an EdgePath yields a sequence of `EdgeWithKey` objects,
+    each representing one hop along the path.
+
+    Properties
+    ----------
+    edges : list[EdgeWithKey]
+        Materialized list of hop edges, each providing:
+        - u, v : node pair
+        - k    : multiedge key or `None`
+        - h    : hop_count (for convenience)
+
+    Notes
+    -----
+    - The class is immutable.
+    - It does not validate path consistency; correctness is expected from
+      upstream expansion logic.
+    """
+    nodes: list[str]
+    keys: list[int]
+    hop_count: int
+
+    def __iter__(self):
+        yield from self.edges
+
+    @cached_property
+    def edges(self) -> list[EdgeWithKey]:
+        return [
+            EdgeWithKey(self.nodes[i], self.nodes[i+1], self.keys[i] if self.keys else None, self.hop_count)
+            for i in range(len(self.nodes)-1)
+        ]
+
+@dataclass(frozen=True)
+class EdgeMapping:
+    """
+    Container for the hop expansion and multiedge-key assignments associated
+    with a single motif match.
+
+    This class links each motif edge (identified by its MapKey) to:
+      - a HopSpec describing the host-node expansion of the motif edge
+      - an EdgeHopKey describing the multi-edge key assignment for each hop
+
+    Parameters
+    ----------
+    edge_hop_map : HopAssignment
+        Mapping {MapKey -> HopSpec}. Each HopSpec defines the expanded host-node
+        path for a motif edge (e.g., ['A', 'x1', 'x2', 'B']).
+
+    edge_key_map : HopKeyAssignment
+        Mapping {MapKey -> EdgeHopKey}. Each EdgeHopKey contains a tuple of
+        multiedge keys aligned with the hops in the corresponding HopSpec.
+
+    Methods
+    -------
+    map_keys() -> list[MapKey]
+        List of motif-edge keys included in this mapping.
+
+    edge_paths : list[EdgePath]
+        A lazily computed list of EdgePath objects, constructed by combining
+        the corresponding HopSpec and EdgeHopKey entries for each MapKey.
+
+    edge_path(u, v) -> EdgePath
+        Retrieve the EdgePath associated with the motif edge (u, v).
+
+    Notes
+    -----
+    - This object stores **motif→host expansion**, not host→motif.
+    - EdgePath creation is lightweight and deterministic; no graph queries
+      occur at this stage.
+    """
+    edge_hop_map: HopAssignment
+    edge_key_map: HopKeyAssignment
+
+    def map_keys(self) -> list[MapKey]:
+        return list(self.edge_hop_map.keys())
+
+    @cached_property
+    def edge_paths(self) -> list[EdgePath]:
+        return [
+            EdgePath(
+                nodes=self.edge_hop_map[(u, v)].nodes,
+                keys=self.edge_key_map[(u, v)].keys,
+                hop_count=self.edge_hop_map[(u, v)].hop_count,
+            ) for u, v in self.edge_hop_map.keys()
+        ]
+
+    def edge_path(self, u, v) -> EdgePath:
+        return EdgePath(
+            nodes=self.edge_hop_map[(u, v)].nodes,
+            keys=self.edge_key_map[(u, v)].keys,
+            hop_count=self.edge_hop_map[(u, v)].hop_count,
+        )
+
+
+class MotifToHostView:
+    """
+    A read-only view that exposes motif→host translation for both nodes and
+    expanded edges, using the information stored in a Match.
+
+    This view gives you a clean interface for accessing host-level entities
+    directly from motif identifiers.
+
+    Access Patterns
+    ---------------
+    mth.node('A')
+        -> host node corresponding to motif node 'A'
+
+    mth.edge('A', 'B')
+        -> EdgePath describing the full host expanded path of motif edge A→B
+
+    Attributes
+    ----------
+    _match : Match
+        Reference to the parent Match object containing node and edge mappings.
+
+    Methods
+    -------
+    node(node) -> str
+        Translate motif node → host node.
+
+    has_node(node) -> bool
+        Check whether a motif node has a mapped host node.
+
+    edge(u, v) -> EdgePath
+        Translate motif edge (u, v) → the expanded host EdgePath, including
+        host nodes and multi-edge keys.
+
+    Notes
+    -----
+    - Returned EdgePath instances always contain **host node names**.
+    - This view does not perform any validation against the actual host graph—
+      it purely reinterprets the Match’s stored metadata.
+    - Node and edge translations are fully deterministic once a Match exists.
+    """
+    def __init__(self, match: Match):
+        self._match = match
+
+    def _get_paths(self, u, v):
+            path = self._match.edge_mapping.edge_path(u, v)
+            return EdgePath(
+                nodes=[self._match.node_mappings[n] for n in path.nodes],
+                keys=path.keys,
+                hop_count=path.hop_count
+            )
+
+    def node(self, node: NodeID) -> NodeID:
+        return self._match.node_mappings[node]
+
+    def has_node(self, node) -> bool:
+        return node in self._match.node_mappings
+
+    def edge(self,u, v) -> EdgePath:
+        return self._get_paths(u, v)
+
+
+@dataclass
+class Match:
+    """
+    Represents the result of matching a motif against a host graph.
+
+    This object stores:
+      - node_mappings: motif node → host node
+      - edge_mapping: motif edge expansions (HopSpecs + EdgeHopKeys)
+      - where_results: optional predicate evaluations (if applicable)
+
+    Parameters
+    ----------
+    node_mappings : NodeMapping
+        A dictionary mapping motif node names to host node names.
+
+    where_results : list[bool] or None
+        Optional list representing WHERE-clause results or other filter
+        evaluations associated with the match. Semantics depend on the caller.
+
+    edge_mapping : EdgeMapping or None
+        Encodes hop-expanded motif edges and their multi-edge key assignments.
+
+    Properties
+    ----------
+    mth : MotifToHostView
+        Convenient motif→host view bound to this Match, supporting:
+            mth.node(...)
+            mth.edge(...)
+
+    Notes
+    -----
+    - The Match does not perform any graph-level validation by itself.
+    - It is typically produced by a motif-matching engine that ensures the
+      compatibility between motif structure and host graph structure.
+    """
+    node_mappings: NodeMapping
+    where_results: Optional[list[bool]]  # what for?
+    edge_mapping: Optional[EdgeMapping]
+
+    @cached_property
+    def mth(self):
+        return MotifToHostView(self)
