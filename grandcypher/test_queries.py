@@ -1,5 +1,5 @@
 import networkx as nx
-from grandcypher.struct import EdgeHopKey, EdgeWithKey, HopAssignment, HopSpec, Match
+from grandcypher.struct import EdgeHopKey, EdgeWithKey, HopSpec
 import pytest
 
 from . import GrandCypher, find_multiedge_keys, generate_multiedge_edge_hop_key, get_edge_from_host
@@ -2521,21 +2521,21 @@ class TestReturnFullNodeAttributes:
 
 def test_generate_multiedge_edge_hop_key():
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
-    edge_hop_map = {k: HopSpec(map_key=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
+    edge_hop_map = {k: HopSpec(edge_id=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
     multi_edge_keys = {("A", "B"): [1, 2], ("B", "C"): [3, 4], ("D", "D"): [-1], ("F", "G"): [None]}
 
     assert list(generate_multiedge_edge_hop_key(edge_hop_map, multi_edge_keys)) == [
-        [EdgeHopKey(map_key=("A", "C"), keys=(1, 3)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
-        [EdgeHopKey(map_key=("A", "C"), keys=(1, 4)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
-        [EdgeHopKey(map_key=("A", "C"), keys=(2, 3)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
-        [EdgeHopKey(map_key=("A", "C"), keys=(2, 4)), EdgeHopKey(map_key=("D", "E"), keys=tuple()), EdgeHopKey(map_key=("F", "G"), keys=(None,))], 
+        [EdgeHopKey(edge_id=("A", "C"), keys=(1, 3)), EdgeHopKey(edge_id=("D", "E"), keys=tuple()), EdgeHopKey(edge_id=("F", "G"), keys=(None,))],
+        [EdgeHopKey(edge_id=("A", "C"), keys=(1, 4)), EdgeHopKey(edge_id=("D", "E"), keys=tuple()), EdgeHopKey(edge_id=("F", "G"), keys=(None,))],
+        [EdgeHopKey(edge_id=("A", "C"), keys=(2, 3)), EdgeHopKey(edge_id=("D", "E"), keys=tuple()), EdgeHopKey(edge_id=("F", "G"), keys=(None,))],
+        [EdgeHopKey(edge_id=("A", "C"), keys=(2, 4)), EdgeHopKey(edge_id=("D", "E"), keys=tuple()), EdgeHopKey(edge_id=("F", "G"), keys=(None,))],
     ]
 
 
 def test_find_multiedge_keys_multidigraph():
-    match = {"A": "a", "B": "b", "C": "c", "D": "d", "F": "f", "G": "g"}
+    match = {"A": "a", "B": "b", "C": "c", "D": "d", "E": "e"}
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D")}
-    edge_hop_map = {k: HopSpec(map_key=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
+    edge_hop_map = {k: HopSpec(edge_id=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
     host = nx.MultiDiGraph()
     host.add_edge("a", "b", key=1)
     host.add_edge("a", "b", key=2)
@@ -2549,9 +2549,9 @@ def test_find_multiedge_keys_multidigraph():
 
 
 def test_find_multiedge_keys_digraph():
-    match = {"A": "a", "B": "b", "C": "c", "D": "d", "F": "f", "G": "g", "F": "f", "G": "g"}
+    match = {"A": "a", "B": "b", "C": "c", "D": "d", "E": "e", "F": "f", "G": "g"}
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
-    edge_hop_map = {k: HopSpec(map_key=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
+    edge_hop_map = {k: HopSpec(edge_id=k, nodes=v, hop_count=1) for k, v in edge_hop_map.items()}
     host = nx.DiGraph()
     host.add_edge("a", "b", key=1)
     host.add_edge("a", "b", key=2)
@@ -2561,7 +2561,7 @@ def test_find_multiedge_keys_digraph():
     host.add_edge("f", "g", key=6)
 
     assert find_multiedge_keys(host, match, edge_hop_map) == {
-        ("A", "B"): [None], ("B", "C"): [None], 
+        ("A", "B"): [None], ("B", "C"): [None],
         ("D", "D"): [-1], ("F", "G"): [None]
     }
 
@@ -2657,3 +2657,22 @@ class TestGetEdgeFromHost:
         )
 
         assert result == {"value": "correct"}
+
+
+def test_equijoin():
+    G = nx.DiGraph()
+    G.add_node("x")
+    G.add_node("y")
+    G.add_node("z")
+    G.add_edge("x", "y")
+    G.add_edge("y", "x")
+    G.add_edge("x", "x")
+    G.add_edge("z", "x")
+
+    qry = """
+    MATCH (n)-->(n)
+    RETURN ID(n)
+    """
+    assert GrandCypher(G).run(qry) == {
+        "ID(n)": ["x"]
+    }

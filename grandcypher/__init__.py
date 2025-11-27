@@ -293,10 +293,10 @@ def _is_edge_attr_match(
             host_edges = []
         else:
             host_edges: list[dict] = [edge]
-    
+
     # NOTE: assume motif isn't a multi Digraph
     motif_edge = _get_edge_attributes(motif, motif_u, motif_v)
-    
+
     # zero hop
     if motif_edge is None and not host_edges:
         return True
@@ -304,7 +304,7 @@ def _is_edge_attr_match(
     if not motif_edge or not host_edges:
         # if there are no edges, they don't match
         return False
-    
+
     motif_labels = motif_edge.get("__labels__", set())
     motif_labels = motif_labels if motif_labels is not None else set()
 
@@ -398,15 +398,15 @@ def get_edge_from_host(
         _get_edge_attributes(host, e.u, e.v, e.k) for e in entity_name)
     edge_data = [d for d in edge_data if d is not None]
     if not edge_data:
-        return [] 
+        return []
     if len(edge_data) == 1:
         edge_data = edge_data[0]
 
     if entity_attribute:
         if isinstance(edge_data, dict):
             return edge_data.get(entity_attribute)
-        raise TypeError(f"cannot access attribute in list")
-        
+        raise TypeError("cannot access attribute in list")
+
     else:
         return edge_data
 
@@ -420,7 +420,7 @@ def find_multiedge_keys(
     Determine which edge keys exist in a host graph for each hop in each HopSpec.
 
     For each HopSpec inside `edge_hop_map`, this function inspects its hop path
-    (`hop_spec.nodes`) and looks at every consecutive (u → v) pair.  
+    (`hop_spec.nodes`) and looks at every consecutive (u → v) pair.
     It then queries the corresponding host graph edges using the node mapping
     provided in `match`.
 
@@ -431,7 +431,7 @@ def find_multiedge_keys(
         If the host graph contains no edge for that pair, returns `[-1]`.
 
         Example:
-            host edges A→B with keys {0, 2, 5}  
+            host edges A→B with keys {0, 2, 5}
             → result[(A, B)] = [0, 2, 5]
 
     - **DiGraph:**
@@ -467,7 +467,7 @@ def find_multiedge_keys(
     """
     result = {}
     for hop_spec in edge_hop_map.values():
-        if not hop_spec: 
+        if not hop_spec:
             continue
         edge_paths = hop_spec.nodes
         if isinstance(target_graph, nx.MultiDiGraph):
@@ -520,13 +520,13 @@ def generate_multiedge_edge_hop_key(
         motif edge.
 
     multi_edge_keys : dict[(str, str), list[int] | list[None] | list[-1]]
-        Output of `find_multiedge_keys`.  
+        Output of `find_multiedge_keys`.
         Maps each hop (u, v) in motif coordinates → possible edge keys.
 
     Yields
     ------
     list[EdgeHopKey]
-        One full multi-edge hop-key assignment.  
+        One full multi-edge hop-key assignment.
         The list is ordered by the iteration order of `edge_hop_map`.
 
     Notes
@@ -551,15 +551,16 @@ def generate_multiedge_edge_hop_key(
                 multi_edge_keys[(start, end)]
             )
         result.append(product(*edge_path_keys))
-    
+
     for row in product(*result):
         ret = []
         for key, val in zip(edge_hop_map.keys(), row):
             ret.append(
                 EdgeHopKey(
-                map_key=key,
-                keys=val if val[0] != -1 else tuple()
-            ))
+                    edge_id=key,
+                    keys=val if val[0] != -1 else tuple()
+                )
+            )
         yield ret
 
 
@@ -579,9 +580,9 @@ class AND(BoolCondition):
         self._condition_b = condition_b
         self._operator = "and"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, *args, **kwargs) -> bool:
-        condition_a, where_a = self._condition_a(match, host, return_edges, *args, **kwargs)
-        condition_b, where_b = self._condition_b(match, host, return_edges, *args, **kwargs)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+        condition_a, where_a = self._condition_a(match, host, return_edges)
+        condition_b, where_b = self._condition_b(match, host, return_edges)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
@@ -592,9 +593,9 @@ class OR(BoolCondition):
         self._condition_b = condition_b
         self._operator = "or"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, *args, **kwargs) -> tuple[bool, dict]:
-        condition_a, where_a = self._condition_a(match, host, return_edges, *args, **kwargs)
-        condition_b, where_b = self._condition_b(match, host, return_edges, *args, **kwargs)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> tuple[bool, dict]:
+        condition_a, where_a = self._condition_a(match, host, return_edges)
+        condition_b, where_b = self._condition_b(match, host, return_edges)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
@@ -627,7 +628,7 @@ class CompoundCondition(Condition):
         return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
 
     # def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, edge_hop_map = None, edge_hop_key = None) -> bool:
-    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, edge_hop_map = None, edge_hop_key = None) -> bool:
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list) -> bool:
         # Check if this is an ID function call
         if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
             # Extract the entity name from ID(entity_name)
@@ -956,7 +957,7 @@ class GrandCypherExecutor:
             if group_tuple not in grouped_data:
                 grouped_data[group_tuple] = []
             grouped_data[group_tuple].append(results[entity][i])
-        
+
 
         def _collate_data(data, func):
             # for ["COUNT", "SUM", "AVG"], we treat None as 0
@@ -1244,7 +1245,7 @@ class GrandCypherExecutor:
                     multi_edge_keys = find_multiedge_keys(self._target_graph, match.node_mappings, edge_hop_map)
                     for edge_key_mapping in generate_multiedge_edge_hop_key(edge_hop_map, multi_edge_keys):
                         valid_match = True
-                        
+
                         # Since the match_iter grandiso doesn't return the proper edge key for multigraph
                         # we need to double check them here to make sure matches correct
                         # For example, consider this test case
@@ -1266,7 +1267,7 @@ class GrandCypherExecutor:
                         # double check all edges in this multi keys combination
                         edge_mapping = EdgeMapping(
                             edge_hop_map=edge_hop_map,
-                            edge_key_map={e.map_key: e for e in edge_key_mapping}
+                            edge_key_map={e.edge_id: e for e in edge_key_mapping}
                         )
                         for edge_path in edge_mapping.edge_paths:
                             for edge in edge_path.edges:
@@ -1344,7 +1345,7 @@ class GrandCypherExecutor:
         # Get list of all match iterators
         iterators = []
         for c in nx.weakly_connected_components(motif):
-            
+
             c_motif = motif.subgraph(c)
             # NOTE: making sure only giving hints to "relevant" nodes.
             c_hints = hinter.take_hints_with_keys(hints, c)
@@ -1377,7 +1378,7 @@ class GrandCypherExecutor:
             iterations, matches = 0, {}
             for x, iterator in enumerate(iterators):
                 grandiso_finder, c_motif, c_hints = iterator
-                for match in grandiso_finder:                    
+                for match in grandiso_finder:
                     if self._doublecheck_hint_result and not hinter.doublecheck(
                         host=self._target_graph,
                         motif=c_motif,

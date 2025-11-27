@@ -1,27 +1,23 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, List, Tuple, Union, Dict, Optional, Hashable
+from typing import Any, Dict, Generator, List, Tuple, Union, Optional, Hashable
 import itertools
 import networkx as nx
 import uuid
 from functools import cached_property
-from dataclasses import dataclass
 
 
 NodeID = Union[str, Hashable]
 EdgeID = Tuple[NodeID, NodeID]
 NodeMapping = Dict[NodeID, NodeID]
-MotifNode = NodeID
-MapKey = EdgeID
 
 
 @dataclass(frozen=True)
 class EdgeHopKey:
-    # TODO: what is map_key?
-    map_key: MapKey
+    edge_id: EdgeID
     keys: tuple[int, ...]
 
 
-HopKeyAssignment = Dict[MapKey, EdgeHopKey]
+HopKeyAssignment = Dict[EdgeID, EdgeHopKey]
 
 
 @dataclass(frozen=True)
@@ -32,16 +28,15 @@ class EdgeWithKey:
     h: int  # hop info
 
 
-
 @dataclass(frozen=True)
 class HopSpec:
     """Represents one expansion option for one motif edge."""
-    map_key: MapKey
+    edge_id: EdgeID
     nodes: Tuple[Any, ...]   # (u,u) or (u,v) or (u,x1,x2,v)
     hop_count: int
 
 
-HopAssignment = Dict[MapKey, HopSpec]
+HopAssignment = Dict[EdgeID, HopSpec]
 
 
 def generate_edge_hop_specs(motif: nx.DiGraph) -> list[list[HopSpec]]:
@@ -58,39 +53,38 @@ def generate_edge_hop_specs(motif: nx.DiGraph) -> list[list[HopSpec]]:
         # NOTE: multi graph isn't used in motif
         if is_multi:
             u, v, k = edge
-            # map_key = (u, v, k)
-            map_key = (u, v)
+            edge_id = (u, v)
             meta = motif.edges[u, v, k]
         else:
             u, v = edge
-            map_key = (u, v)
+            edge_id = (u, v)
             meta = motif.edges[u, v]
         min_hop = int(meta.get("__min_hop__", 1))
         max_hop = int(meta.get("__max_hop__", min_hop))
 
         hop_specs = _enumerate_hops(
-            map_key, u, v, min_hop, max_hop
+            edge_id, u, v, min_hop, max_hop
         )
         all_edges.append(hop_specs)
 
     return all_edges
 
 
-def generate_hop_assignments(all_edge_hops: list[list[HopSpec]]) -> Generator[HopAssignment]:
+def generate_hop_assignments(all_edge_hops: list[list[HopSpec]]) -> Generator[HopAssignment, None, None]:
     """
     all_edge_hops: List[List[HopSpec]]
         List of hop-spec choices per edge.
 
     Yields:
-        Dict[MapKey, HopSpec]
+        Dict[EdgeID, HopSpec]
     """
     for combo in itertools.product(*all_edge_hops):
-        yield {hs.map_key: hs for hs in combo}
+        yield {hs.edge_id: hs for hs in combo}
 
 
-def materialize_motif(hop_assignment: Dict[MapKey, HopSpec], motif: nx.DiGraph) -> nx.DiGraph:
+def materialize_motif(hop_assignment: Dict[EdgeID, HopSpec], motif: nx.DiGraph) -> nx.DiGraph:
     """
-    hop_assignment: Dict[MapKey, HopSpec]
+    hop_assignment: Dict[EdgeID, HopSpec]
     motif: original motif graph (for node attrs)
 
     Returns:
@@ -110,7 +104,7 @@ def materialize_motif(hop_assignment: Dict[MapKey, HopSpec], motif: nx.DiGraph) 
         new_nodes.update(nodes)
         if hs.hop_count == 0:
             continue
-        A, B = hs.map_key
+        A, B = hs.edge_id
         if motif.is_multigraph():
             motif_edge_data = motif.get_edge_data(A, B) or {}
             if motif_edge_data:
@@ -138,9 +132,9 @@ def _new_hop_id() -> str:
 
 
 def _enumerate_hops(
-    map_key: MapKey,
-    u: MotifNode,
-    v: MotifNode,
+    edge_id: EdgeID,
+    u: NodeID,
+    v: NodeID,
     min_hop: int,
     max_hop: int,
 ) -> List[HopSpec]:
@@ -152,7 +146,7 @@ def _enumerate_hops(
 
     # --- Case A: zero-hop allowed (u→u)
     if min_hop == 0:
-        hop_specs.append(HopSpec(map_key, (u, u), hop_count=0))
+        hop_specs.append(HopSpec(edge_id, (u, u), hop_count=0))
 
     intermediates = []
     # --- Case B: hops from 1 to max_hop
@@ -162,7 +156,7 @@ def _enumerate_hops(
     for hop_count in range(1, max_hop):
         if hop_count >= min_hop:
             nodes = tuple([u] + intermediates + [v])
-            hop_specs.append(HopSpec(map_key, nodes, hop_count=hop_count))
+            hop_specs.append(HopSpec(edge_id, nodes, hop_count=hop_count))
         intermediates.append(_new_hop_id())
 
     return hop_specs
@@ -227,28 +221,28 @@ class EdgeMapping:
     Container for the hop expansion and multiedge-key assignments associated
     with a single motif match.
 
-    This class links each motif edge (identified by its MapKey) to:
+    This class links each motif edge (identified by its EdgeID) to:
       - a HopSpec describing the host-node expansion of the motif edge
       - an EdgeHopKey describing the multi-edge key assignment for each hop
 
     Parameters
     ----------
     edge_hop_map : HopAssignment
-        Mapping {MapKey -> HopSpec}. Each HopSpec defines the expanded host-node
+        Mapping {EdgeID -> HopSpec}. Each HopSpec defines the expanded host-node
         path for a motif edge (e.g., ['A', 'x1', 'x2', 'B']).
 
     edge_key_map : HopKeyAssignment
-        Mapping {MapKey -> EdgeHopKey}. Each EdgeHopKey contains a tuple of
+        Mapping {EdgeID -> EdgeHopKey}. Each EdgeHopKey contains a tuple of
         multiedge keys aligned with the hops in the corresponding HopSpec.
 
     Methods
     -------
-    map_keys() -> list[MapKey]
-        List of motif-edge keys included in this mapping.
+    edge_ids() -> list[EdgeID]
+        List of motif-edge ids included in this mapping.
 
     edge_paths : list[EdgePath]
         A lazily computed list of EdgePath objects, constructed by combining
-        the corresponding HopSpec and EdgeHopKey entries for each MapKey.
+        the corresponding HopSpec and EdgeHopKey entries for each EdgeID.
 
     edge_path(u, v) -> EdgePath
         Retrieve the EdgePath associated with the motif edge (u, v).
@@ -262,7 +256,7 @@ class EdgeMapping:
     edge_hop_map: HopAssignment
     edge_key_map: HopKeyAssignment
 
-    def map_keys(self) -> list[MapKey]:
+    def edge_ids(self) -> list[EdgeID]:
         return list(self.edge_hop_map.keys())
 
     @cached_property
@@ -323,7 +317,7 @@ class MotifToHostView:
       it purely reinterprets the Match’s stored metadata.
     - Node and edge translations are fully deterministic once a Match exists.
     """
-    def __init__(self, match: Match):
+    def __init__(self, match: "Match"):
         self._match = match
 
     def _get_paths(self, u, v):

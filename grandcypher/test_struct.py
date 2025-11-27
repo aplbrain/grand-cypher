@@ -1,10 +1,6 @@
 
-from .struct import *
+from .struct import EdgeWithKey, HopSpec, EdgeMapping, EdgeHopKey, Match, EdgePath
 
-
-# ===================================================================
-#                              TESTS
-# ===================================================================
 
 def test_edgepath_edges():
     ep = EdgePath(nodes=["A", "B", "C"], keys=[10, 20], hop_count=2)
@@ -18,10 +14,10 @@ def test_edgepath_edges():
 
 def test_edgemapping_edgepath():
     hop_map = {
-        ("A", "B"): HopSpec(map_key=("A", "B"), nodes=["x1", "x2", "x3"], hop_count=5)
+        ("A", "B"): HopSpec(edge_id=("A", "B"), nodes=["x1", "x2", "x3"], hop_count=5)
     }
     key_map = {
-        ("A", "B"): EdgeHopKey(map_key=("A", "B"), keys=(1, 2))
+        ("A", "B"): EdgeHopKey(edge_id=("A", "B"), keys=(1, 2))
     }
 
     em = EdgeMapping(edge_hop_map=hop_map, edge_key_map=key_map)
@@ -48,8 +44,8 @@ def test_motif_to_host_view_node():
 
 
 def test_motif_to_host_view_edge():
-    hop_map = {("A", "B"): HopSpec(map_key=("A", "B"), nodes=["x1", "x2"], hop_count=3)}
-    key_map = {("A", "B"): EdgeHopKey(map_key=("A", "B"), keys=(9,))}
+    hop_map = {("A", "B"): HopSpec(edge_id=("A", "B"), nodes=["x1", "x2"], hop_count=3)}
+    key_map = {("A", "B"): EdgeHopKey(edge_id=("A", "B"), keys=(9,))}
 
     match = Match(
         node_mappings={"x1": "H1", "x2": "H2"},
