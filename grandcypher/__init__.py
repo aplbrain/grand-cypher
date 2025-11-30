@@ -14,9 +14,10 @@ import string
 from functools import lru_cache
 import networkx as nx
 from grandcypher.struct import (
-    EdgeHopKey, EdgeMapping, EdgeWithKey, HopAssignment, Match, NodeMapping, generate_edge_hop_specs, generate_hop_assignments, materialize_motif)
+    EdgeHopKey, EdgeMapping, EdgeWithKey, HopAssignment, Match, NodeMapping, generate_edge_hop_specs,
+    generate_hop_assignments, materialize_motif, unify_zero_hop_nodes)
 from lark import Lark, Transformer, v_args, Token, Tree
-from itertools import product
+from itertools import chain, product
 
 import grandiso
 
@@ -470,18 +471,25 @@ def find_multiedge_keys(
         if not hop_spec:
             continue
         edge_paths = hop_spec.nodes
+
         if isinstance(target_graph, nx.MultiDiGraph):
             for i in range(len(edge_paths)-1):
                 start = edge_paths[i]
                 end = edge_paths[i+1]
-                result[(start, end)] = target_graph.get_edge_data(match[start], match[end])
-                result[(start, end)] = list(result[(start, end)].keys()) if result[(start, end)] is not None else [-1]
+                if hop_spec.hop_count == 0:
+                    result[(start, end)] = [-1]
+                else:
+                    result[(start, end)] = target_graph.get_edge_data(match[start], match[end])
+                    result[(start, end)] = list(result[(start, end)].keys()) if result[(start, end)] is not None else [-1]
         else:
             for i in range(len(edge_paths)-1):
                 start = edge_paths[i]
                 end = edge_paths[i+1]
-                result[(start, end)] = target_graph.get_edge_data(match[start], match[end])
-                result[(start, end)] = [None] if result[(start, end)] is not None else [-1]
+                if hop_spec.hop_count == 0:
+                    result[(start, end)] = [-1]
+                else:
+                    result[(start, end)] = target_graph.get_edge_data(match[start], match[end])
+                    result[(start, end)] = [None] if result[(start, end)] is not None else [-1]
     return result
 
 
@@ -1204,15 +1212,14 @@ class GrandCypherExecutor:
             self_matches = []
             complete = False
 
-            for my_motif, edge_hop_map in self._edge_hop_motifs(self._motif):
+            for my_motif, edge_hop_map, alias in self._edge_hop_motifs(self._motif):
                 # Iteration is complete
                 if complete:
                     break
 
-                # Process zero hop edges
-                zero_hop_edges = [
-                    k for k, v in edge_hop_map.items() if v.hop_count == 0
-                ]
+                # alias is provided - no need to rebuild UnionFind
+                zero_hop_nodes = set(
+                    chain.from_iterable(hs.edge_id for hs in edge_hop_map.values() if hs.hop_count == 0))
 
                 matches = self._matches_iter(my_motif)
 
@@ -1223,29 +1230,33 @@ class GrandCypherExecutor:
                         where_results=None,
                         edge_mapping=None
                     )
-                    # Handle zero hop edges
-                    # an edge with zero hop edges in a match must have u == v
-                    # and b must have node_attr_match because the grandiso didn't check it
+                    # Handle zero hop nodes
+                    # In zero edge hop edges, we check if the node are actually the collapsed node
                     valid_match = True
-                    for u, v in zero_hop_edges:
-                        if match.mth.has_node(v) and match.mth.node(v) != match.mth.node(u):
-                            valid_match = False
-                            break
-                        # Since v is collapsed to u, we need to validate if v and u are the same structure
-                        # NOTE: this might be checked better with UnionSet algo from edgehop motif within.
+                    for u1 in zero_hop_nodes:
+                        # take out the collapsed to node
+                        u2 = alias[u1]
                         if not _is_node_attr_match(
-                            v, match.node_mappings[u], self._motif, self._target_graph
+                            u1, match.mth.node(u2), self._motif, self._target_graph
                         ):
                             valid_match = False
                             break
-                        match.node_mappings[v] = match.node_mappings[u]
+                        # the match might not contain the mapping for the un-collapsed node, let's put it in
+                        match.node_mappings[u1] = match.node_mappings[u2]
 
                     if not valid_match:
                         continue
                     multi_edge_keys = find_multiedge_keys(self._target_graph, match.node_mappings, edge_hop_map)
                     for edge_key_mapping in generate_multiedge_edge_hop_key(edge_hop_map, multi_edge_keys):
-                        valid_match = True
+                        edge_mapping = EdgeMapping(
+                            edge_hop_map=edge_hop_map,
+                            edge_key_map={e.edge_id: e for e in edge_key_mapping}
+                        )
+                        edges = chain.from_iterable(edge_path.edges for edge_path in edge_mapping.edge_paths)
 
+                        # DOUBLE CHECK EDGE
+                        # =================================================
+                        # CASE1 multigraph
                         # Since the match_iter grandiso doesn't return the proper edge key for multigraph
                         # we need to double check them here to make sure matches correct
                         # For example, consider this test case
@@ -1263,25 +1274,40 @@ class GrandCypherExecutor:
                         # """
                         # there are two edge between b and c, with label colleague and mentor
                         # the mentor should be rejected here
-
-                        # double check all edges in this multi keys combination
-                        edge_mapping = EdgeMapping(
-                            edge_hop_map=edge_hop_map,
-                            edge_key_map={e.edge_id: e for e in edge_key_mapping}
-                        )
-                        for edge_path in edge_mapping.edge_paths:
-                            for edge in edge_path.edges:
-                                motif_u, motif_v = edge.u, edge.v
-                                host_u, host_v = match.mth.node(motif_u), match.mth.node(motif_v)
-                                host_keys = (edge.k,) if edge.k is not None else tuple()
-                                if not _is_edge_attr_match(motif_edge_id=(motif_u, motif_v),
-                                                           host_edge_id=(host_u, host_v),
-                                                           motif=my_motif,
-                                                           host=self._target_graph,
-                                                           host_keys=host_keys):
-                                    valid_match = False
-                                    break
-                            if not valid_match:
+                        # ================================================
+                        # CASE 2: equijoin
+                        # The grandiso doesn't check when we explicitly do the equijoin
+                        # G = nx.DiGraph()
+                        # G.add_node("x")
+                        # G.add_node("y")
+                        # G.add_node("z")
+                        # G.add_edge("x", "y")
+                        # G.add_edge("y", "x")
+                        # G.add_edge("x", "x")
+                        # G.add_edge("z", "x")
+                        # qry = """
+                        # MATCH (n)-->(n)
+                        # RETURN ID(n)
+                        # """
+                        # Grandiso return both x and y, but only x is correct, y is not
+                        valid_match = True
+                        for edge in edges:
+                            # SKIP if hop = 0, there is no edge
+                            if edge.h == 0:
+                                continue
+                            motif_u, motif_v = edge.u, edge.v
+                            motif_u, motif_v = alias.get(motif_u, motif_u), alias.get(motif_v, motif_v)
+                            host_u, host_v = match.mth.node(motif_u), match.mth.node(motif_v)
+                            # skip if there is 1 edge between 2 nodes and they are different (not equijoin)
+                            if edge.u != edge.v and self._target_graph.number_of_edges(host_u, host_v) < 2:
+                                continue
+                            host_keys = (edge.k,) if edge.k is not None else tuple()
+                            if not _is_edge_attr_match(motif_edge_id=(motif_u, motif_v),
+                                                        host_edge_id=(host_u, host_v),
+                                                        motif=my_motif,
+                                                        host=self._target_graph,
+                                                        host_keys=host_keys):
+                                valid_match = False
                                 break
                         if not valid_match:
                             continue
@@ -1400,23 +1426,30 @@ class GrandCypherExecutor:
                     join = match
             yield from join
 
-    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> Generator[Tuple[nx.Graph, HopAssignment], None, None]:
-        """generate a list of edge-hop-expanded motif with edge-hop-map.
+    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> Generator[Tuple[nx.Graph, HopAssignment, dict], None, None]:
+        """Generate edge-hop-expanded motifs with node unification.
 
         Arguments:
             motif (nx.Graph): The motif graph
 
-        Returns:
-            List[Tuple[nx.Graph, dict]]: list of motif and edge-hop-map. \
-                edge-hop-map is a mapping from an edge to a real edge path
-                where a real edge path can have more than 2 element (hop >= 2)
-                or it can have 2 same element (hop = 0).
+        Yields:
+            Tuple[nx.Graph, HopAssignment, dict]:
+                - my_motif: Unified and materialized motif
+                - edge_hop_map: Original hop assignment (unchanged)
+                - alias: Mapping from original nodes to representatives
         """
         hop_specs = generate_edge_hop_specs(motif)
         hop_assignments = list(generate_hop_assignments(hop_specs))
+
         for hop_assignment in hop_assignments:
-            my_motif = materialize_motif(hop_assignment, motif)
-            yield my_motif, hop_assignment
+            # Step 1: Materialize (without unification)
+            materialized_motif = materialize_motif(hop_assignment, motif)
+
+            # Step 2: Unify zero-hop nodes and get alias
+            my_motif, alias = unify_zero_hop_nodes(materialized_motif, hop_assignment.values())
+
+            # Step 3: Yield unified motif, original hop_assignment, and alias
+            yield my_motif, hop_assignment, alias
 
     def _is_limit(self, length):
         """Check if the current number of results has reached the limit.
