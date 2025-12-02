@@ -49,8 +49,9 @@ compound_condition  : condition
                     | "(" compound_condition boolean_arithmetic compound_condition ")"
                     | compound_condition boolean_arithmetic compound_condition
 
-condition           : (entity_id | scalar_function) op entity_id_or_value
-                    | (entity_id | scalar_function) op_list value_list
+condition           : (entity_id | scalar_function | list_predicate_function) op entity_id_or_value
+                    | (entity_id | scalar_function | list_predicate_function) op_list value_list
+                    | list_predicate_function
                     | sub_query
                     | "not"i condition -> condition_not
 
@@ -92,6 +93,15 @@ AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
 
 scalar_function      : "id"i "(" entity_id ")" -> id_function
+                     | "size"i "(" list_expression ")" -> size_function
+
+list_predicate_function : "all"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> all_function
+                        | "any"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> any_function
+                        | "none"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> none_function
+                        | "single"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> single_function
+
+list_expression      : "relationships"i "(" entity_id ")"  -> relationships_function
+                     | entity_id  -> entity_list
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -588,9 +598,9 @@ class AND(BoolCondition):
         self._condition_b = condition_b
         self._operator = "and"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = self._condition_a(match, host, return_edges)
-        condition_b, where_b = self._condition_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
+        condition_a, where_a = self._condition_a(match, host, return_edges, scope)
+        condition_b, where_b = self._condition_b(match, host, return_edges, scope)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
@@ -601,9 +611,9 @@ class OR(BoolCondition):
         self._condition_b = condition_b
         self._operator = "or"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> tuple[bool, dict]:
-        condition_a, where_a = self._condition_a(match, host, return_edges)
-        condition_b, where_b = self._condition_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, scope: dict = None) -> tuple[bool, dict]:
+        condition_a, where_a = self._condition_a(match, host, return_edges, scope)
+        condition_b, where_b = self._condition_b(match, host, return_edges, scope)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
@@ -636,7 +646,40 @@ class CompoundCondition(Condition):
         return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
 
     # def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, edge_hop_map = None, edge_hop_key = None) -> bool:
-    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list) -> bool:
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
+        # NEW: Check scope FIRST (highest priority for list predicate loop variables)
+        if scope and "." in self._entity_id:
+            var_name, attr = self._entity_id.split(".", 1)
+            if var_name in scope:
+                # Found loop variable - get value from scoped element
+                element = scope[var_name]
+                value = element.get(attr, None) if isinstance(element, dict) else None
+
+                # Reuse existing operator!
+                val = self._operator(value, self._value)
+                operator_results = [val]
+                if val is None:
+                    val = False
+                if val != self._should_be:
+                    return False, operator_results
+                return True, operator_results
+
+        # NEW: Handle scalar functions (SIZE, future functions)
+        # This enables: WHERE size(r) > 5
+        if isinstance(self._entity_id, SIZE):
+            # Evaluate SIZE to get integer value
+            size_value = self._entity_id(match, host, return_edges, scope)
+
+            # Apply comparison operator
+            val = self._operator(size_value, self._value)
+            operator_results = [val]
+
+            if val is None:
+                val = False
+            if val != self._should_be:
+                return False, operator_results
+            return True, operator_results
+
         # Check if this is an ID function call
         if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
             # Extract the entity name from ID(entity_name)
@@ -675,6 +718,294 @@ class CompoundCondition(Condition):
         if val != self._should_be:
             return False, operator_results
         return True, operator_results
+
+
+# ==================== List Expression Classes for all()/any() ====================
+
+class ListExpression:
+    """Base class for list expressions that can reference scope."""
+
+    def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None) -> list:
+        """Evaluate to get list, possibly using scope variables."""
+        raise NotImplementedError
+
+
+class ScopedListExpression(ListExpression):
+    """
+    List expression that can reference scope variables.
+
+    Examples:
+    - 'r' → get edge list from return_edges
+    - 'e.related' → get 'related' attr from scope variable 'e'
+    """
+    def __init__(self, expr: str):
+        self._expr = expr
+
+    def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None):
+        # Case 1: Scope variable attribute (e.g., "e.related")
+        if "." in self._expr and scope:
+            var_name, attr = self._expr.split(".", 1)
+            if var_name in scope:
+                element = scope[var_name]
+                value = element.get(attr, []) if isinstance(element, dict) else []
+                # Normalize to list
+                if not isinstance(value, list):
+                    value = [value] if value is not None else []
+                return value
+
+        # Case 2: Direct edge variable from match (e.g., "r")
+        if self._expr in return_edges:
+            edge_mapping = return_edges[self._expr]
+            host_edges = match.mth.edge(*edge_mapping).edges
+            edge_data = get_edge_from_host(host, host_edges, None)
+            # Normalize to list
+            if isinstance(edge_data, dict):
+                return [edge_data]
+            elif isinstance(edge_data, list):
+                return edge_data
+            else:
+                return []
+
+        return []
+
+
+class RelationshipsFunction(ListExpression):
+    """Implements relationships() function."""
+    def __init__(self, path_variable: str):
+        self._path_variable = path_variable
+
+    def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None):
+        # Use ScopedListExpression to handle scope references
+        return ScopedListExpression(self._path_variable).evaluate(match, host, return_edges, scope)
+
+
+# ==================== ALL and ANY Condition Classes ====================
+
+class ALL(Condition):
+    """
+    Implements all() predicate function.
+
+    REUSES existing Condition classes (CompoundCondition, AND, OR)!
+    """
+    def __init__(self, name: str, list_expr: str, pred):
+        self._name = name           # Loop variable name
+        self._list_expr = list_expr  # String expr or ListExpression object
+        self._pred = pred           # Regular Condition (CompoundCondition, AND, OR, etc.)
+
+    def __call__(self, match, host: nx.DiGraph, return_edges: list,
+                 scope: dict = None) -> tuple[bool, list]:
+        # 1. Evaluate list expression (may reference scope)
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # 2. Handle empty/null lists (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return True, [True]  # Vacuously true
+
+        # 3. Iterate and evaluate predicate for each element
+        for element in elements:
+            # Create new scope with current element
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope (pred is a regular Condition!)
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            # Short-circuit on False
+            if result is False:
+                return False, [False]
+            elif result is None:
+                # Track null for Neo4j semantics
+                pass
+
+        return True, [True]
+
+
+class ANY(Condition):
+    """Similar structure to ALL but returns True if any element satisfies."""
+    def __init__(self, name: str, list_expr: str, pred):
+        self._name = name
+        self._list_expr = list_expr
+        self._pred = pred  # Regular Condition!
+
+    def __call__(self, match, host, return_edges, scope=None):
+        # Evaluate list
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle empty/null (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return False, [False]  # False for empty list
+
+        # Iterate
+        for element in elements:
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            # Short-circuit on True
+            if result is True:
+                return True, [True]
+
+        return False, [False]
+
+
+class NONE(Condition):
+    """
+    Implements none() predicate function.
+    Returns true when NO elements satisfy the predicate.
+
+    Neo4j semantics:
+    - Empty list [] → True (no elements violate)
+    - Null list → None
+    - Short-circuits on first True (element satisfies)
+    """
+    def __init__(self, name: str, list_expr, pred: Condition):
+        self._name = name           # Loop variable name
+        self._list_expr = list_expr # String expr or ListExpression
+        self._pred = pred           # Regular Condition
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate list expression
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle empty/null (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return True, [True]  # Vacuously true (no elements violate)
+
+        # Iterate and check for violations
+        for element in elements:
+            # Create new scope with current element
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            # Short-circuit on True (found element that satisfies)
+            if result is True:
+                return False, [False]  # none() fails if any element satisfies
+
+        return True, [True]  # No elements satisfied the predicate
+
+
+class SINGLE(Condition):
+    """
+    Implements single() predicate function.
+    Returns true when EXACTLY ONE element satisfies the predicate.
+
+    Neo4j semantics:
+    - Empty list [] → False (not exactly one)
+    - Null list → None
+    - Cannot short-circuit (must check all elements to count)
+    """
+    def __init__(self, name: str, list_expr, pred: Condition):
+        self._name = name           # Loop variable name
+        self._list_expr = list_expr # String expr or ListExpression
+        self._pred = pred           # Regular Condition
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate list expression
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle empty/null (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return False, [False]  # Empty doesn't have exactly one
+
+        # Count satisfying elements
+        count = 0
+        has_null = False
+
+        for element in elements:
+            # Create new scope with current element
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            if result is True:
+                count += 1
+                # Early exit if count > 1
+                if count > 1:
+                    return False, [False]
+            elif result is None:
+                has_null = True
+
+        # Return based on count
+        if count == 1:
+            return True, [True]
+        elif count == 0 and has_null:
+            return None, [None]  # Uncertain due to nulls
+        else:
+            return False, [False]
+
+
+class SIZE(Condition):
+    """
+    Implements size() scalar function.
+    Returns the length of a list as an integer.
+
+    Can be used in:
+    - WHERE clauses: WHERE size(r) > 2
+    - RETURN clauses: RETURN size(r) AS pathLength
+
+    Neo4j semantics:
+    - Null list → None
+    - Empty list [] → 0
+    """
+    def __init__(self, list_expr):
+        self._list_expr = list_expr  # String expr or ListExpression
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate list expression
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle null
+        if elements is None:
+            return None
+
+        # Return length
+        return len(elements)
+
+
+# ==================== End of List Predicate Classes ====================
 
 
 def none_wrapper(func) -> Callable[[Any, Any], Union[bool, None]]:
@@ -761,6 +1092,9 @@ def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_
                                 should_be=condition._should_be)
     if (isinstance(condition, LambdaCompareCondition) and
         condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
+        # Handle scalar functions (SIZE, etc.) - can't be optimized by indexer
+        if not isinstance(entity_id, str):
+            return IndexerUnsupportedOp(condition, entity_id, value)
         if entity_id.startswith("ID()"):
             entity_id = entity_id[3:-1]
         operator = condition._operator
@@ -864,8 +1198,24 @@ class GrandCypherExecutor:
         result = {}
         processed_paths = set()  # Keep track of processed paths
 
-        # handling RETURN ID(A)
+        # handling RETURN ID(A) and scalar functions (SIZE, etc.)
         for data_path in data_paths:
+            # Special handling for scalar functions like SIZE
+            if isinstance(data_path, SIZE):
+                # Evaluate SIZE for each match
+                ret = []
+                for match in true_matches:
+                    size_result = data_path(
+                        match,
+                        self._target_graph,
+                        self._return_edges,
+                        scope=None
+                    )
+                    ret.append(size_result)
+                result[data_path] = ret[offset_limit]
+                processed_paths.add(data_path)
+                continue
+
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
             # Special handling for ID function
             if entity_name.upper().startswith("ID(") and entity_name.endswith(")"):
@@ -1050,7 +1400,8 @@ class GrandCypherExecutor:
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
-        self._return_requests = list(map(str, self._return_requests))
+        # Convert return_requests to strings, but keep scalar function objects (SIZE, etc.) as-is
+        self._return_requests = [str(item) if not isinstance(item, SIZE) else item for item in self._return_requests]
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
@@ -1486,7 +1837,8 @@ class GrandCypherTransformer(Transformer):
                     self._executors[-1]._aggregation_attributes.add(entity)
                     self._executors[-1]._aggregate_functions.append((func, entity))
                 else:
-                    if not isinstance(item, str):
+                    # Handle scalar functions (SIZE, etc.) - keep object for evaluation
+                    if not isinstance(item, str) and not isinstance(item, SIZE):
                         item = str(item.value)
                     self._executors[-1]._original_return_requests.add(item)
 
@@ -1700,7 +2052,11 @@ class GrandCypherTransformer(Transformer):
 
     def compound_condition(self, val):
         if len(val) == 1:
-            val = CompoundCondition(*val[0])
+            item = val[0]
+            # Check if already a Condition object (ALL, ANY, or other)
+            if isinstance(item, Condition):
+                return item
+            val = CompoundCondition(*item)
         else:  # len == 3
             compound_a, operator, compound_b = val
             val = operator(compound_a, compound_b)
@@ -1713,8 +2069,12 @@ class GrandCypherTransformer(Transformer):
         return _BOOL_ARI["or"]
 
     def condition(self, condition):
-        if len(condition) == 1:  # sub query
-            condition = condition[0]
+        if len(condition) == 1:  # sub query or list predicate or scalar function
+            item = condition[0]
+            # Check if it's already a Condition object (ALL, ANY, NONE, SINGLE, SIZE)
+            if isinstance(item, (ALL, ANY, NONE, SINGLE, SIZE)):
+                return item
+            condition = item
 
         if len(condition) == 3:
             (entity_id, operator, value) = condition
@@ -1736,6 +2096,74 @@ class GrandCypherTransformer(Transformer):
         # self._return_requests.append(entity_name)
         # Return a special identifier that will be processed in _lookup method
         return f"ID({entity_name})"
+
+    def all_function(self, items):
+        """
+        Parse: all(edge IN r WHERE edge.weight > 5)
+
+        items structure:
+        [0]: CNAME (loop variable, e.g., "edge")
+        [1]: list_expression (string or ListExpression)
+        [2]: compound_condition (already transformed into CompoundCondition/AND/OR!)
+        """
+        loop_variable = items[0].value
+        list_expression = items[1]  # Already a string or ListExpression
+        inner_condition = items[2]  # Already a Condition - perfect!
+
+        # Just pass it through! No conversion needed.
+        return ALL(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def any_function(self, items):
+        """Similar to all_function - trivial!"""
+        loop_variable = items[0].value
+        list_expression = items[1]
+        inner_condition = items[2]  # Already a Condition
+
+        return ANY(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def none_function(self, items):
+        """
+        Parse: none(edge IN r WHERE edge.weight > 5)
+
+        items: [loop_var, list_expr, condition]
+        """
+        loop_variable = items[0].value
+        list_expression = items[1]
+        inner_condition = items[2]
+
+        return NONE(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def single_function(self, items):
+        """
+        Parse: single(edge IN r WHERE edge.weight > 5)
+
+        items: [loop_var, list_expr, condition]
+        """
+        loop_variable = items[0].value
+        list_expression = items[1]
+        inner_condition = items[2]
+
+        return SINGLE(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def size_function(self, items):
+        """
+        Parse: size(r) or size(relationships(r))
+
+        items: [list_expression]
+        """
+        list_expression = items[0]
+
+        return SIZE(list_expr=list_expression)
+
+    def relationships_function(self, items):
+        """Parse: relationships(path_variable)"""
+        path_variable = items[0].value if isinstance(items[0], Token) else items[0]
+        return path_variable  # Return as string, will be wrapped in ScopedListExpression
+
+    def entity_list(self, items):
+        """Parse: direct entity reference as list"""
+        entity_id = items[0]
+        return entity_id.value if isinstance(entity_id, Token) else entity_id
 
     def value_list(self, items):
         return list(items)
