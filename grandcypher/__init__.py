@@ -588,6 +588,55 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 class Condition:
     ...
 
+
+class ScalarFunction(Condition):
+    """
+    Base class for scalar functions that return a single value per row.
+
+    Characteristics:
+    - Return single value (not aggregate)
+    - Can be used in WHERE clauses (comparison)
+    - Can be used in RETURN clauses (output)
+    - Evaluated once per match
+
+    Examples: ID(), SIZE(), type(), timestamp()
+    """
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        """Evaluate scalar function for a single match."""
+        raise NotImplementedError
+
+    def __str__(self) -> str:
+        """Return string representation for result keys."""
+        raise NotImplementedError
+
+
+class ID(ScalarFunction):
+    """
+    Implements id() scalar function.
+    Returns the node ID from the host graph.
+
+    Usage:
+    - WHERE: WHERE ID(n) = 1
+    - RETURN: RETURN ID(n) AS nodeId
+    """
+
+    def __init__(self, entity_name: str):
+        self._entity_name = entity_name
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        """Return the node ID from the match."""
+        if self._entity_name in match.node_mappings:
+            return match.node_mappings[self._entity_name]
+        else:
+            raise IndexError(f"Entity {self._entity_name} not in match.")
+
+    def __str__(self) -> str:
+        return f"ID({self._entity_name})"
+
+
 class BoolCondition(Condition):
     ...
 
@@ -645,7 +694,6 @@ class CompoundCondition(Condition):
     def __str__(self):
         return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
 
-    # def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, edge_hop_map = None, edge_hop_key = None) -> bool:
     def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
         # NEW: Check scope FIRST (highest priority for list predicate loop variables)
         if scope and "." in self._entity_id:
@@ -664,14 +712,14 @@ class CompoundCondition(Condition):
                     return False, operator_results
                 return True, operator_results
 
-        # NEW: Handle scalar functions (SIZE, future functions)
-        # This enables: WHERE size(r) > 5
-        if isinstance(self._entity_id, SIZE):
-            # Evaluate SIZE to get integer value
-            size_value = self._entity_id(match, host, return_edges, scope)
+        # Handle all scalar functions (ID, SIZE, future functions)
+        # This enables: WHERE ID(n) = 1, WHERE size(r) > 5, etc.
+        if isinstance(self._entity_id, ScalarFunction):
+            # Evaluate scalar function to get value
+            scalar_value = self._entity_id(match, host, return_edges, scope)
 
             # Apply comparison operator
-            val = self._operator(size_value, self._value)
+            val = self._operator(scalar_value, self._value)
             operator_results = [val]
 
             if val is None:
@@ -680,38 +728,24 @@ class CompoundCondition(Condition):
                 return False, operator_results
             return True, operator_results
 
-        # Check if this is an ID function call
-        if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
-            # Extract the entity name from ID(entity_name)
-            actual_entity_name = self._entity_id[3:-1]  # Remove "ID(" and ")"
-            if actual_entity_name in match.node_mappings:
-                # Return the node ID directly
-                node_id = match.node_mappings[actual_entity_name]
-                try:
-                    val = self._operator(node_id, self._value)
-                except:
-                    val = False
-                operator_results = [val]
-            else:
-                raise IndexError(f"Entity {actual_entity_name} not in match.")
-        else:
-            host_entity_id = self._entity_id.split(".")
-            if isinstance(self._operator, SUBOP):
-                # SUBOP operator doesn't need a entity id.
-                val = self._operator(match.node_mappings, self._value)
-            elif host_entity_id[0] in match.node_mappings:
-                # Regular entity attribute access
-                host_entity_id[0] = match.node_mappings[host_entity_id[0]]
-                val = self._operator(get_node_from_host(host, host_entity_id[0], host_entity_id[1]), self._value)
-            elif host_entity_id[0] in return_edges:
-                # looking for edge...
-                entity_name, entity_attribute = _data_path_to_entity_name_attribute(self._entity_id)
-                edge_mapping = return_edges[entity_name]
+        # Regular entity handling
+        host_entity_id = self._entity_id.split(".")
+        if isinstance(self._operator, SUBOP):
+            # SUBOP operator doesn't need a entity id.
+            val = self._operator(match.node_mappings, self._value)
+        elif host_entity_id[0] in match.node_mappings:
+            # Regular entity attribute access
+            host_entity_id[0] = match.node_mappings[host_entity_id[0]]
+            val = self._operator(get_node_from_host(host, host_entity_id[0], host_entity_id[1]), self._value)
+        elif host_entity_id[0] in return_edges:
+            # looking for edge...
+            entity_name, entity_attribute = _data_path_to_entity_name_attribute(self._entity_id)
+            edge_mapping = return_edges[entity_name]
 
-                host_edges = match.mth.edge(*edge_mapping).edges
-                val = self._operator(get_edge_from_host(host, host_edges, entity_attribute), self._value)
-            else:
-                raise IndexError(f"Entity {host_entity_id} not in graph.")
+            host_edges = match.mth.edge(*edge_mapping).edges
+            val = self._operator(get_edge_from_host(host, host_edges, entity_attribute), self._value)
+        else:
+            raise IndexError(f"Entity {host_entity_id} not in graph.")
         operator_results = [val]
         if val is None:
             val is False
@@ -971,7 +1005,7 @@ class SINGLE(Condition):
             return False, [False]
 
 
-class SIZE(Condition):
+class SIZE(ScalarFunction):
     """
     Implements size() scalar function.
     Returns the length of a list as an integer.
@@ -1003,6 +1037,11 @@ class SIZE(Condition):
 
         # Return length
         return len(elements)
+
+    def __str__(self) -> str:
+        """Return string representation for result keys."""
+        expr_str = self._list_expr if isinstance(self._list_expr, str) else "..."
+        return f"size({expr_str})"
 
 
 # ==================== End of List Predicate Classes ====================
@@ -1092,11 +1131,13 @@ def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_
                                 should_be=condition._should_be)
     if (isinstance(condition, LambdaCompareCondition) and
         condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
-        # Handle scalar functions (SIZE, etc.) - can't be optimized by indexer
-        if not isinstance(entity_id, str):
+        # Handle scalar functions
+        if isinstance(entity_id, ID):
+            # ID() can be optimized - extract entity name
+            entity_id = entity_id._entity_name
+        elif not isinstance(entity_id, str):
+            # Other scalar functions can't be optimized by indexer
             return IndexerUnsupportedOp(condition, entity_id, value)
-        if entity_id.startswith("ID()"):
-            entity_id = entity_id[3:-1]
         operator = condition._operator
         if should_be is True:
             operator = WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
@@ -1198,41 +1239,32 @@ class GrandCypherExecutor:
         result = {}
         processed_paths = set()  # Keep track of processed paths
 
-        # handling RETURN ID(A) and scalar functions (SIZE, etc.)
+        # Handle all scalar functions (ID, SIZE, future functions) - UNIFIED!
         for data_path in data_paths:
-            # Special handling for scalar functions like SIZE
-            if isinstance(data_path, SIZE):
-                # Evaluate SIZE for each match
+            if isinstance(data_path, ScalarFunction):
+                # Evaluate scalar function for each match
                 ret = []
                 for match in true_matches:
-                    size_result = data_path(
+                    result_value = data_path(
                         match,
                         self._target_graph,
                         self._return_edges,
                         scope=None
                     )
-                    ret.append(size_result)
-                result[data_path] = ret[offset_limit]
+                    ret.append(result_value)
+
+                # Use str(data_path) as key: "ID(A)", "size(r)", etc.
+                result[str(data_path)] = ret[offset_limit]
                 processed_paths.add(data_path)
+                processed_paths.add(str(data_path))
                 continue
 
+        # Validate entity names for non-scalar-function data paths
+        for data_path in data_paths:
+            if isinstance(data_path, ScalarFunction):
+                continue  # Skip scalar functions, already processed
+
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
-            # Special handling for ID function
-            if entity_name.upper().startswith("ID(") and entity_name.endswith(")"):
-                # Extract the original entity name
-                original_entity = entity_name[3:-1]
-                if original_entity in motif_nodes:
-                    # Return the node ID directly instead of the node attributes
-                    ret = [match.mth.node(original_entity) for match in true_matches]
-                    result[data_path] = ret[offset_limit]
-                    result[original_entity] = ret[
-                        offset_limit
-                    ]  # Also store under original entity name
-                    processed_paths.add(data_path)  # Mark as processed
-                    processed_paths.add(
-                        original_entity
-                    )  # Mark original also as processed
-                    continue
             if (
                 entity_name not in motif_nodes
                 and entity_name not in self._return_edges
@@ -1400,8 +1432,8 @@ class GrandCypherExecutor:
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
-        # Convert return_requests to strings, but keep scalar function objects (SIZE, etc.) as-is
-        self._return_requests = [str(item) if not isinstance(item, SIZE) else item for item in self._return_requests]
+        # Convert all return_requests to strings (including scalar functions) for key matching
+        self._return_requests = [str(item) for item in self._return_requests]
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
@@ -1837,14 +1869,27 @@ class GrandCypherTransformer(Transformer):
                     self._executors[-1]._aggregation_attributes.add(entity)
                     self._executors[-1]._aggregate_functions.append((func, entity))
                 else:
-                    # Handle scalar functions (SIZE, etc.) - keep object for evaluation
-                    if not isinstance(item, str) and not isinstance(item, SIZE):
+                    # Handle scalar functions (ID, SIZE, etc.) - keep object for evaluation
+                    if isinstance(item, ScalarFunction):
+                        # Keep scalar function object
+                        self._executors[-1]._original_return_requests.add(item)
+                        if alias:
+                            # Use str(item) for alias key: "ID(A)", "size(r)", etc.
+                            self._executors[-1]._entity2alias[str(item)] = alias
+                        self._executors[-1]._return_requests.append(item)
+                    elif not isinstance(item, str):
+                        # Convert non-string, non-scalar-function items to string
                         item = str(item.value)
-                    self._executors[-1]._original_return_requests.add(item)
-
-                    if alias:
-                        self._executors[-1]._entity2alias[item] = alias
-                    self._executors[-1]._return_requests.append(item)
+                        self._executors[-1]._original_return_requests.add(item)
+                        if alias:
+                            self._executors[-1]._entity2alias[item] = alias
+                        self._executors[-1]._return_requests.append(item)
+                    else:
+                        # Already a string, use as-is
+                        self._executors[-1]._original_return_requests.add(item)
+                        if alias:
+                            self._executors[-1]._entity2alias[item] = alias
+                        self._executors[-1]._return_requests.append(item)
 
         self._executors[-1]._alias2entity.update({v: k for k, v in self._executors[-1]._entity2alias.items()})
 
@@ -2071,8 +2116,8 @@ class GrandCypherTransformer(Transformer):
     def condition(self, condition):
         if len(condition) == 1:  # sub query or list predicate or scalar function
             item = condition[0]
-            # Check if it's already a Condition object (ALL, ANY, NONE, SINGLE, SIZE)
-            if isinstance(item, (ALL, ANY, NONE, SINGLE, SIZE)):
+            # Check if it's already a Condition object (ALL, ANY, NONE, SINGLE, ScalarFunction)
+            if isinstance(item, (ALL, ANY, NONE, SINGLE, ScalarFunction)):
                 return item
             condition = item
 
@@ -2091,11 +2136,8 @@ class GrandCypherTransformer(Transformer):
 
     def id_function(self, entity_id):
         entity_name = entity_id[0].value
-        # Add the raw entity ID to the return requests as well
-        # This ensures tests like test_id can still access res["A"]
-        # self._return_requests.append(entity_name)
-        # Return a special identifier that will be processed in _lookup method
-        return f"ID({entity_name})"
+        # Return ID object (class-based, not string-based)
+        return ID(entity_name)
 
     def all_function(self, items):
         """
