@@ -1384,6 +1384,267 @@ class TestMultigraphRelations:
         assert res["COUNT(r.amount)"] == [2, 1]
         assert res["SUM(r.amount)"] == [52, 6]
 
+    def test_multigraph_aggregation_function_collect(self):
+        """Test COLLECT aggregation function"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine", age=35)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+        host.add_edge("a", "c", __labels__={"owes"}, amount=39)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+
+        # Test COLLECT with edge attributes
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, COLLECT(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Bob"]
+        assert res["COLLECT(r.amount)"] == [[40, 12], [6]]
+
+        # Test COLLECT with node attributes
+        qry = """
+        MATCH (n)
+        RETURN COLLECT(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["COLLECT(n.name)"] == [["Alice", "Bob", "Christine"]]
+
+    def test_multigraph_collect_with_grouping(self):
+        """Test COLLECT with grouping by multiple keys"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Charlie")
+        host.add_edge("a", "b", value=1)
+        host.add_edge("a", "b", value=2)
+        host.add_edge("b", "c", value=3)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, m.name, COLLECT(r.value)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Bob"]
+        assert res["m.name"] == ["Bob", "Charlie"]
+        assert res["COLLECT(r.value)"] == [[1, 2], [3]]
+
+
+class TestStringScalarFunctions:
+    """Tests for string scalar functions: toLower, toUpper, trim"""
+
+    def test_tolower_basic(self):
+        """Test toLower with node attribute"""
+        host = nx.DiGraph()
+        host.add_node("a", name="ALICE")
+        host.add_node("b", name="BOB")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, toLower(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["ALICE", "BOB"]
+        assert res["toLower(n.name)"] == ["alice", "bob"]
+
+    def test_tolower_mixed_case(self):
+        """Test toLower with mixed case strings"""
+        host = nx.DiGraph()
+        host.add_node("a", name="AlIcE")
+
+        qry = """
+        MATCH (n)
+        RETURN toLower(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["toLower(n.name)"] == ["alice"]
+
+    def test_toupper_basic(self):
+        """Test toUpper with node attribute"""
+        host = nx.DiGraph()
+        host.add_node("a", name="alice")
+        host.add_node("b", name="bob")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, toUpper(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["alice", "bob"]
+        assert res["toUpper(n.name)"] == ["ALICE", "BOB"]
+
+    def test_toupper_mixed_case(self):
+        """Test toUpper with mixed case strings"""
+        host = nx.DiGraph()
+        host.add_node("a", name="AlIcE")
+
+        qry = """
+        MATCH (n)
+        RETURN toUpper(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["toUpper(n.name)"] == ["ALICE"]
+
+    def test_trim_whitespace(self):
+        """Test trim with leading/trailing whitespace"""
+        host = nx.DiGraph()
+        host.add_node("a", name="  alice  ")
+        host.add_node("b", name="bob   ")
+        host.add_node("c", name="   charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, trim(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["  alice  ", "bob   ", "   charlie"]
+        assert res["trim(n.name)"] == ["alice", "bob", "charlie"]
+
+    def test_trim_no_whitespace(self):
+        """Test trim with no whitespace"""
+        host = nx.DiGraph()
+        host.add_node("a", name="alice")
+
+        qry = """
+        MATCH (n)
+        RETURN trim(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["trim(n.name)"] == ["alice"]
+
+    # NOTE: Scalar functions work on LEFT side of WHERE conditions but not RIGHT side yet
+    # Currently supported: WHERE ID(A) == 1, WHERE toLower(n.name) = 'value'
+    # Not yet supported: WHERE ID(A) == ID(B), WHERE toLower(n.name) = toLower(m.name)
+    # def test_string_functions_with_where(self):
+    #     """Test string functions in WHERE clause"""
+    #     host = nx.DiGraph()
+    #     host.add_node("a", name="ALICE")
+    #     host.add_node("b", name="BOB")
+    #
+    #     qry = """
+    #     MATCH (n)
+    #     WHERE toLower(n.name) = 'alice'
+    #     RETURN n.name
+    #     """
+    #     res = GrandCypher(host).run(qry)
+    #     assert set(res["n.name"]) == {"ALICE", "alice"}
+
+    def test_string_functions_combined(self):
+        """Test combining multiple string functions (nested)"""
+        host = nx.DiGraph()
+        host.add_node("a", name="  ALICE  ")
+        host.add_node("b", name="  bob  ")
+
+        qry = """
+        MATCH (n)
+        RETURN toLower(trim(n.name))
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["toLower(trim(n.name))"]) == {"alice", "bob"}
+
+    def test_nested_functions_multiple_levels(self):
+        """Test deeply nested functions"""
+        host = nx.DiGraph()
+        host.add_node("a", name="  HELLO  ")
+
+        qry = """
+        MATCH (n)
+        RETURN toUpper(trim(toLower(n.name)))
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["toUpper(trim(toLower(n.name)))"] == ["HELLO"]
+
+
+class TestTypeAndCoalesceScalarFunctions:
+    """Tests for type() and coalesce() scalar functions"""
+
+    def test_type_basic(self):
+        """Test type() with relationship labels"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=50)
+        host.add_edge("a", "b", __labels__={"owes"}, amount=20)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, type(r), r.amount
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Alice"]
+        assert set(res["type(r)"]) == {"paid", "owes"}
+
+    def test_type_with_specific_label(self):
+        """Test type() with specific relationship label filter"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=50)
+        host.add_edge("a", "b", __labels__={"owes"}, amount=20)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN type(r)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["type(r)"] == ["paid"]
+
+    def test_coalesce_basic(self):
+        """Test coalesce() with multiple attributes"""
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", nickname=None)
+        host.add_node("b", nickname="Bobby")
+        host.add_node("c", name="Charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.nickname, n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        # a: nickname is None, so use name "Alice"
+        # b: nickname is "Bobby"
+        # c: nickname missing, so use name "Charlie"
+        assert set(res["coalesce(n.nickname, n.name)"]) == {"Alice", "Bobby", "Charlie"}
+
+    def test_coalesce_first_non_null(self):
+        """Test that coalesce returns first non-null value"""
+        host = nx.DiGraph()
+        host.add_node("a", first=None, second="Second", third="Third")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.first, n.second, n.third)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["coalesce(n.first, n.second, n.third)"] == ["Second"]
+
+    def test_coalesce_all_null(self):
+        """Test coalesce when all values are null"""
+        host = nx.DiGraph()
+        host.add_node("a")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.missing1, n.missing2)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["coalesce(n.missing1, n.missing2)"] == [None]
+
+    def test_coalesce_with_fallback(self):
+        """Test coalesce with a fallback attribute"""
+        host = nx.DiGraph()
+        host.add_node("a", id="id_a")
+        host.add_node("b", name="Bob", id="id_b")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.name, n.id)
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["coalesce(n.name, n.id)"]) == {"Bob", "id_a"}
+
 
 class TestAlias:
     @pytest.mark.benchmark
