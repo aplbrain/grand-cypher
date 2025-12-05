@@ -52,7 +52,12 @@ class TestCOUNT:
     def test_count_basic(self, simple_graph, simple_matches):
         """Test basic COUNT functionality."""
         agg = COUNT("n", None)
-        result = agg.evaluate(simple_matches, simple_graph, {}, ["m"])
+        # Build scope with values extracted from matches
+        scope = {
+            "n": [m.node_mappings["n"] for m in simple_matches],  # ["A", "B"]
+            "m": [m.node_mappings["m"] for m in simple_matches],  # ["B", "C"]
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, ["m"], scope=scope)
 
         # Should group by 'm' and count 'n' values
         assert len(result) == 2
@@ -78,9 +83,13 @@ class TestCOUNT:
         matches.append(match)
 
         agg = COUNT("n", "nonexistent")  # This attribute doesn't exist
-        result = agg.evaluate(matches, simple_graph, {}, [])
+        # Build scope with None values (attribute doesn't exist)
+        scope = {
+            "n.nonexistent": [simple_graph.nodes[m.node_mappings["n"]].get("nonexistent") for m in matches],
+        }
+        result = agg.evaluate(matches, simple_graph, {}, [], scope=scope)
 
-        # Should count 0 because all values are None
+        # COUNT excludes None values
         assert result[()] == 0
 
 
@@ -90,7 +99,11 @@ class TestSUM:
     def test_sum_basic(self, simple_graph, simple_matches):
         """Test basic SUM functionality."""
         agg = SUM("n", "value")
-        result = agg.evaluate(simple_matches, simple_graph, {}, [])
+        # Build scope with attribute values from graph nodes
+        scope = {
+            "n.value": [simple_graph.nodes[m.node_mappings["n"]].get("value") for m in simple_matches],
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, [], scope=scope)
 
         # Should sum all values: 10 + 20 = 30
         assert result[()] == 30
@@ -111,7 +124,11 @@ class TestSUM:
         matches.append(match)
 
         agg = SUM("n", "nonexistent")  # This attribute doesn't exist (None)
-        result = agg.evaluate(matches, simple_graph, {}, [])
+        # Build scope with None values
+        scope = {
+            "n.nonexistent": [simple_graph.nodes[m.node_mappings["n"]].get("nonexistent") for m in matches],
+        }
+        result = agg.evaluate(matches, simple_graph, {}, [], scope=scope)
 
         # Should sum to 0 (None treated as 0)
         assert result[()] == 0
@@ -123,7 +140,11 @@ class TestAVG:
     def test_avg_basic(self, simple_graph, simple_matches):
         """Test basic AVG functionality."""
         agg = AVG("n", "value")
-        result = agg.evaluate(simple_matches, simple_graph, {}, [])
+        # Build scope with attribute values
+        scope = {
+            "n.value": [simple_graph.nodes[m.node_mappings["n"]].get("value") for m in simple_matches],
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, [], scope=scope)
 
         # Should average: (10 + 20) / 2 = 15
         assert result[()] == 15
@@ -144,7 +165,11 @@ class TestAVG:
         matches.append(match)
 
         agg = AVG("n", "nonexistent")
-        result = agg.evaluate(matches, simple_graph, {}, [])
+        # Build scope with None values
+        scope = {
+            "n.nonexistent": [simple_graph.nodes[m.node_mappings["n"]].get("nonexistent") for m in matches],
+        }
+        result = agg.evaluate(matches, simple_graph, {}, [], scope=scope)
 
         # Should average to 0
         assert result[()] == 0
@@ -156,7 +181,11 @@ class TestMAX:
     def test_max_basic(self, simple_graph, simple_matches):
         """Test basic MAX functionality."""
         agg = MAX("n", "value")
-        result = agg.evaluate(simple_matches, simple_graph, {}, [])
+        # Build scope with attribute values
+        scope = {
+            "n.value": [simple_graph.nodes[m.node_mappings["n"]].get("value") for m in simple_matches],
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, [], scope=scope)
 
         # Should find max: max(10, 20) = 20
         assert result[()] == 20
@@ -178,7 +207,11 @@ class TestMAX:
             matches.append(match)
 
         agg = MAX("n", "nonexistent")
-        result = agg.evaluate(matches, simple_graph, {}, [])
+        # Build scope with None values
+        scope = {
+            "n.nonexistent": [simple_graph.nodes[m.node_mappings["n"]].get("nonexistent") for m in matches],
+        }
+        result = agg.evaluate(matches, simple_graph, {}, [], scope=scope)
 
         # Should return -inf (all None values)
         assert result[()] == -float("inf")
@@ -190,7 +223,11 @@ class TestMIN:
     def test_min_basic(self, simple_graph, simple_matches):
         """Test basic MIN functionality."""
         agg = MIN("n", "value")
-        result = agg.evaluate(simple_matches, simple_graph, {}, [])
+        # Build scope with attribute values
+        scope = {
+            "n.value": [simple_graph.nodes[m.node_mappings["n"]].get("value") for m in simple_matches],
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, [], scope=scope)
 
         # Should find min: min(10, 20) = 10
         assert result[()] == 10
@@ -212,7 +249,11 @@ class TestMIN:
             matches.append(match)
 
         agg = MIN("n", "nonexistent")
-        result = agg.evaluate(matches, simple_graph, {}, [])
+        # Build scope with None values
+        scope = {
+            "n.nonexistent": [simple_graph.nodes[m.node_mappings["n"]].get("nonexistent") for m in matches],
+        }
+        result = agg.evaluate(matches, simple_graph, {}, [], scope=scope)
 
         # Should return +inf (all None values)
         assert result[()] == float("inf")
@@ -224,7 +265,12 @@ class TestGrouping:
     def test_grouping_by_one_key(self, simple_graph, simple_matches):
         """Test grouping by a single key."""
         agg = COUNT("n", None)
-        result = agg.evaluate(simple_matches, simple_graph, {}, ["m"])
+        # Build scope with node mappings
+        scope = {
+            "n": [m.node_mappings["n"] for m in simple_matches],
+            "m": [m.node_mappings["m"] for m in simple_matches],
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, ["m"], scope=scope)
 
         # Should have 2 groups (one for each 'm' value)
         assert len(result) == 2
@@ -243,7 +289,13 @@ class TestGrouping:
             matches.append(match)
 
         agg = COUNT("o", None)
-        result = agg.evaluate(matches, simple_graph, {}, ["n", "m"])
+        # Build scope with node mappings
+        scope = {
+            "o": [m.node_mappings["o"] for m in matches],
+            "n": [m.node_mappings["n"] for m in matches],
+            "m": [m.node_mappings["m"] for m in matches],
+        }
+        result = agg.evaluate(matches, simple_graph, {}, ["n", "m"], scope=scope)
 
         # Should have 3 groups (one for each (n, m) combination)
         assert len(result) == 3
@@ -254,7 +306,11 @@ class TestGrouping:
     def test_no_grouping(self, simple_graph, simple_matches):
         """Test aggregation without grouping (single group)."""
         agg = COUNT("n", None)
-        result = agg.evaluate(simple_matches, simple_graph, {}, [])
+        # Build scope with node mappings
+        scope = {
+            "n": [m.node_mappings["n"] for m in simple_matches],
+        }
+        result = agg.evaluate(simple_matches, simple_graph, {}, [], scope=scope)
 
         # Should have 1 group (empty tuple)
         assert len(result) == 1
@@ -268,7 +324,7 @@ class TestEdgeCases:
     def test_empty_matches(self, simple_graph):
         """Test aggregation with no matches."""
         agg = COUNT("n", None)
-        result = agg.evaluate([], simple_graph, {}, [])
+        result = agg.evaluate([], simple_graph, {}, [], scope={})
 
         # Should return empty dict
         assert result == {}
@@ -279,7 +335,7 @@ class TestEdgeCases:
 
         agg = AggregationFunction("n", None)
         with pytest.raises(NotImplementedError):
-            agg.evaluate([], simple_graph, {}, [])
+            agg.evaluate([], simple_graph, {}, [], scope={})
 
 
 # Tests for coalesce() with string literals

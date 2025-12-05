@@ -633,41 +633,68 @@ class EntityAttributeGetter:
     literal string values (e.g., "Unknown").
 
     Examples:
-        EntityAttributeGetter("n", "name") represents n.name
+        EntityAttributeGetter("n.name") represents n.name
         EntityAttributeGetter("n") represents n
     """
 
-    def __init__(self, entity: str, attribute: str = None):
+    def __init__(self, expression: str):
         """
-        Initialize entity attribute getter.
+        Initialize entity attribute getter from expression string.
 
         Args:
-            entity: The entity variable name (e.g., "n", "m")
-            attribute: The attribute name (e.g., "name", "value"), or None for entity ID
+            expression: The entity reference (e.g., "n", "n.name", "r.weight")
         """
-        self.entity = entity
-        self.attribute = attribute
+        # Parse expression: "n.name" -> entity="n", attribute="name"
+        if "." in expression:
+            self.entity, self.attribute = expression.split(".", 1)
+        else:
+            self.entity = expression
+            self.attribute = None
 
-    def evaluate(self, match: Match, host: nx.DiGraph):
+    def evaluate(self, match: Match, host: nx.DiGraph,
+                 return_edges: dict = None, scope: dict = None):
         """
         Evaluate this entity reference against a match.
+
+        Priority order for resolution:
+        1. Scope variables (highest priority - for list predicates)
+        2. Node mappings (standard case)
+        3. Edge mappings (for edge references)
+        4. None (not found)
 
         Args:
             match: The current match containing node mappings
             host: The graph to query
+            return_edges: Optional edge mappings for edge references
+            scope: Optional scope dictionary for list predicate variables
 
         Returns:
             The attribute value if found, None otherwise
         """
-        if self.attribute:
-            # Getting an attribute: n.name
-            if self.entity in match.node_mappings:
-                node_id = match.node_mappings[self.entity]
+        # 1. Check scope first (highest priority for list predicates)
+        if scope and self.entity in scope:
+            element = scope[self.entity]
+            if self.attribute:
+                # Scope variable with attribute access: e.related
+                return element.get(self.attribute) if isinstance(element, dict) else None
+            # Simple scope variable: e
+            return element
+
+        # 2. Check node mappings (standard case)
+        if self.entity in match.node_mappings:
+            node_id = match.node_mappings[self.entity]
+            if self.attribute:
+                # Node with attribute: n.name
                 return host.nodes[node_id].get(self.attribute)
-        else:
-            # Getting the entity ID itself: n
-            if self.entity in match.node_mappings:
-                return match.node_mappings[self.entity]
+            # Simple node reference: n - return full node dictionary
+            return dict(host.nodes[node_id])
+
+        # 3. Check edge mappings (for edge references)
+        if return_edges and self.entity in return_edges:
+            edge_mapping = return_edges[self.entity]
+            host_edges = match.mth.edge(*edge_mapping).edges
+            return get_edge_from_host(host, host_edges, self.attribute)
+
         return None
 
     def __str__(self) -> str:
@@ -678,7 +705,9 @@ class EntityAttributeGetter:
 
     def __repr__(self) -> str:
         """Detailed representation for debugging."""
-        return f"EntityAttributeGetter({self.entity!r}, {self.attribute!r})"
+        if self.attribute:
+            return f"EntityAttributeGetter({self.entity!r}.{self.attribute!r})"
+        return f"EntityAttributeGetter({self.entity!r})"
 
 
 class ID(ScalarFunction):
@@ -800,8 +829,8 @@ class COUNT(AggregationFunction):
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, int]:
         grouped = self._group_matches(scope, group_keys)
-        # COUNT counts all values (old behavior treats None as 0, so it gets counted)
-        return {group: len(values) for group, values in grouped.items()}
+        # COUNT only counts non-null values (filter out None)
+        return {group: sum(1 for v in values if v is not None) for group, values in grouped.items()}
 
 
 class SUM(AggregationFunction):
@@ -924,35 +953,34 @@ class LambdaCompareCondition(CompareCondition):
 
 class CompoundCondition(Condition):
     """compound condition"""
-    def __init__(self, should_be: bool, entity_id: str, operator, value):
+    def __init__(self, should_be: bool, entity_id, operator, value):
+        """
+        Initialize CompoundCondition.
+
+        Args:
+            should_be: Boolean expectation for the condition
+            entity_id: Either a ScalarFunction or string entity reference (e.g., "n.name")
+            operator: Comparison operator
+            value: Value to compare against
+        """
         self._should_be = should_be
-        self._entity_id = entity_id
         self._operator = operator
         self._value = value
 
+        # Wrap entity references in EntityAttributeGetter at init time
+        if isinstance(entity_id, ScalarFunction):
+            self._entity_id = entity_id
+        else:
+            # Store both the original string and the getter
+            self._entity_id_str = entity_id
+            self._entity_id = EntityAttributeGetter(entity_id)
+
     def __str__(self):
-        return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
+        entity_repr = self._entity_id_str if hasattr(self, '_entity_id_str') else str(self._entity_id)
+        return f"compound of {self._operator} for key {entity_repr}: value {self._value}"
 
     def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
-        # NEW: Check scope FIRST (highest priority for list predicate loop variables)
-        if scope and "." in self._entity_id:
-            var_name, attr = self._entity_id.split(".", 1)
-            if var_name in scope:
-                # Found loop variable - get value from scoped element
-                element = scope[var_name]
-                value = element.get(attr, None) if isinstance(element, dict) else None
-
-                # Reuse existing operator!
-                val = self._operator(value, self._value)
-                operator_results = [val]
-                if val is None:
-                    val = False
-                if val != self._should_be:
-                    return False, operator_results
-                return True, operator_results
-
-        # Handle all scalar functions (ID, SIZE, future functions)
-        # This enables: WHERE ID(n) = 1, WHERE size(r) > 5, etc.
+        # Handle scalar functions (ID, SIZE, etc.)
         if isinstance(self._entity_id, ScalarFunction):
             # Evaluate scalar function to get value
             scalar_value = self._entity_id(match, host, return_edges, scope)
@@ -967,27 +995,25 @@ class CompoundCondition(Condition):
                 return False, operator_results
             return True, operator_results
 
-        # Regular entity handling
-        host_entity_id = self._entity_id.split(".")
+        # Handle SUBOP operators (special case - don't need entity resolution)
         if isinstance(self._operator, SUBOP):
-            # SUBOP operator doesn't need a entity id.
             val = self._operator(match.node_mappings, self._value)
-        elif host_entity_id[0] in match.node_mappings:
-            # Regular entity attribute access
-            host_entity_id[0] = match.node_mappings[host_entity_id[0]]
-            val = self._operator(get_node_from_host(host, host_entity_id[0], host_entity_id[1]), self._value)
-        elif host_entity_id[0] in return_edges:
-            # looking for edge...
-            entity_name, entity_attribute = _data_path_to_entity_name_attribute(self._entity_id)
-            edge_mapping = return_edges[entity_name]
+            operator_results = [val]
+            if val is None:
+                val = False
+            if val != self._should_be:
+                return False, operator_results
+            return True, operator_results
 
-            host_edges = match.mth.edge(*edge_mapping).edges
-            val = self._operator(get_edge_from_host(host, host_edges, entity_attribute), self._value)
-        else:
-            raise IndexError(f"Entity {host_entity_id} not in graph.")
+        # Use EntityAttributeGetter for all entity references (handles scope, nodes, edges)
+        entity_value = self._entity_id.evaluate(match, host, return_edges, scope)
+
+        # Apply comparison operator
+        val = self._operator(entity_value, self._value)
         operator_results = [val]
+
         if val is None:
-            val is False
+            val = False
         if val != self._should_be:
             return False, operator_results
         return True, operator_results
@@ -1012,34 +1038,30 @@ class ScopedListExpression(ListExpression):
     - 'e.related' → get 'related' attr from scope variable 'e'
     """
     def __init__(self, expr: str):
+        """
+        Initialize ScopedListExpression.
+
+        Args:
+            expr: Expression string (e.g., "r", "e.related")
+        """
         self._expr = expr
+        # Wrap expression in EntityAttributeGetter at init time
+        self._getter = EntityAttributeGetter(expr)
 
     def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None):
-        # Case 1: Scope variable attribute (e.g., "e.related")
-        if "." in self._expr and scope:
-            var_name, attr = self._expr.split(".", 1)
-            if var_name in scope:
-                element = scope[var_name]
-                value = element.get(attr, []) if isinstance(element, dict) else []
-                # Normalize to list
-                if not isinstance(value, list):
-                    value = [value] if value is not None else []
-                return value
+        # Use EntityAttributeGetter to resolve the value
+        value = self._getter.evaluate(match, host, return_edges, scope)
 
-        # Case 2: Direct edge variable from match (e.g., "r")
-        if self._expr in return_edges:
-            edge_mapping = return_edges[self._expr]
-            host_edges = match.mth.edge(*edge_mapping).edges
-            edge_data = get_edge_from_host(host, host_edges, None)
-            # Normalize to list
-            if isinstance(edge_data, dict):
-                return [edge_data]
-            elif isinstance(edge_data, list):
-                return edge_data
-            else:
-                return []
-
-        return []
+        # Normalize to list
+        if value is None:
+            return []
+        elif isinstance(value, list):
+            return value
+        elif isinstance(value, dict):
+            return [value]
+        else:
+            # Scalar value - wrap in list
+            return [value]
 
 
 class RelationshipsFunction(ListExpression):
@@ -1289,29 +1311,27 @@ class ToLower(ScalarFunction):
     Converts a string to lowercase.
     """
 
-    def __init__(self, expression: str):
-        self._expression = expression  # e.g., "n.name"
+    def __init__(self, expression):
+        """
+        Initialize toLower with an expression.
+
+        Args:
+            expression: Either a ScalarFunction or string entity reference (e.g., "n.name")
+        """
+        if isinstance(expression, ScalarFunction):
+            self._expression = expression
+        else:
+            # Wrap entity reference in EntityAttributeGetter at init time
+            self._expression = EntityAttributeGetter(expression)
 
     def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
                  scope: Optional[dict] = None):
-        # Check if expression is a nested ScalarFunction
+        # Evaluate expression (either ScalarFunction or EntityAttributeGetter)
         if isinstance(self._expression, ScalarFunction):
-            # Evaluate the nested function first
             value = self._expression(match, host, return_edges, scope)
-        elif '.' in self._expression:
-            # Extract value from expression (e.g., "n.name")
-            entity, attr = self._expression.split('.', 1)
-            if entity in match.node_mappings:
-                node_id = match.node_mappings[entity]
-                value = host.nodes[node_id].get(attr)
-            else:
-                value = None
         else:
-            # Simple entity reference
-            if self._expression in match.node_mappings:
-                value = match.node_mappings[self._expression]
-            else:
-                value = None
+            # It's an EntityAttributeGetter
+            value = self._expression.evaluate(match, host, return_edges, scope)
 
         return value.lower() if isinstance(value, str) else value
 
@@ -1325,28 +1345,27 @@ class ToUpper(ScalarFunction):
     Converts a string to uppercase.
     """
 
-    def __init__(self, expression: str):
-        self._expression = expression
+    def __init__(self, expression):
+        """
+        Initialize toUpper with an expression.
+
+        Args:
+            expression: Either a ScalarFunction or string entity reference (e.g., "n.name")
+        """
+        if isinstance(expression, ScalarFunction):
+            self._expression = expression
+        else:
+            # Wrap entity reference in EntityAttributeGetter at init time
+            self._expression = EntityAttributeGetter(expression)
 
     def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
                  scope: Optional[dict] = None):
-        # Check if expression is a nested ScalarFunction
+        # Evaluate expression (either ScalarFunction or EntityAttributeGetter)
         if isinstance(self._expression, ScalarFunction):
-            # Evaluate the nested function first
             value = self._expression(match, host, return_edges, scope)
-        elif '.' in self._expression:
-            # Extract value from expression
-            entity, attr = self._expression.split('.', 1)
-            if entity in match.node_mappings:
-                node_id = match.node_mappings[entity]
-                value = host.nodes[node_id].get(attr)
-            else:
-                value = None
         else:
-            if self._expression in match.node_mappings:
-                value = match.node_mappings[self._expression]
-            else:
-                value = None
+            # It's an EntityAttributeGetter
+            value = self._expression.evaluate(match, host, return_edges, scope)
 
         return value.upper() if isinstance(value, str) else value
 
@@ -1360,28 +1379,27 @@ class Trim(ScalarFunction):
     Trims whitespace from a string.
     """
 
-    def __init__(self, expression: str):
-        self._expression = expression
+    def __init__(self, expression):
+        """
+        Initialize trim with an expression.
+
+        Args:
+            expression: Either a ScalarFunction or string entity reference (e.g., "n.name")
+        """
+        if isinstance(expression, ScalarFunction):
+            self._expression = expression
+        else:
+            # Wrap entity reference in EntityAttributeGetter at init time
+            self._expression = EntityAttributeGetter(expression)
 
     def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
                  scope: Optional[dict] = None):
-        # Check if expression is a nested ScalarFunction
+        # Evaluate expression (either ScalarFunction or EntityAttributeGetter)
         if isinstance(self._expression, ScalarFunction):
-            # Evaluate the nested function first
             value = self._expression(match, host, return_edges, scope)
-        elif '.' in self._expression:
-            # Extract value from expression
-            entity, attr = self._expression.split('.', 1)
-            if entity in match.node_mappings:
-                node_id = match.node_mappings[entity]
-                value = host.nodes[node_id].get(attr)
-            else:
-                value = None
         else:
-            if self._expression in match.node_mappings:
-                value = match.node_mappings[self._expression]
-            else:
-                value = None
+            # It's an EntityAttributeGetter
+            value = self._expression.evaluate(match, host, return_edges, scope)
 
         return value.strip() if isinstance(value, str) else value
 
@@ -1502,15 +1520,21 @@ _BOOL_ARI = {
 
 
 def _data_path_to_entity_name_attribute(data_path):
+    """
+    Parse data path into entity name and attribute using EntityAttributeGetter.
+
+    Args:
+        data_path: String path (e.g., "n.name", "n") or Token containing the path
+
+    Returns:
+        tuple: (entity_name, entity_attribute)
+    """
     if isinstance(data_path, Token):
         data_path = data_path.value
-    if "." in data_path:
-        entity_name, entity_attribute = data_path.split(".")
-    else:
-        entity_name = data_path
-        entity_attribute = None
 
-    return entity_name, entity_attribute
+    # Use EntityAttributeGetter to parse the path
+    getter = EntityAttributeGetter(data_path)
+    return getter.entity, getter.attribute
 
 
 # this is to convert WHERE OPERATOR to INDEXER OPERATOR
@@ -1557,6 +1581,12 @@ def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_
         if isinstance(entity_id, ID):
             # ID() can be optimized - extract entity name
             entity_id = entity_id._entity_name
+        elif isinstance(entity_id, EntityAttributeGetter):
+            # EntityAttributeGetter can be optimized - extract full expression
+            if entity_id.attribute:
+                entity_id = f"{entity_id.entity}.{entity_id.attribute}"
+            else:
+                entity_id = entity_id.entity
         elif not isinstance(entity_id, str):
             # Other scalar functions can't be optimized by indexer
             return IndexerUnsupportedOp(condition, entity_id, value)
@@ -1704,22 +1734,14 @@ class GrandCypherExecutor:
 
             if entity_name in motif_nodes:
                 # We are looking for a node mapping in the target graph:
-
-                if entity_attribute:
-                    # Get the correct entity from the target host graph,
-                    # and then return the attribute:
-                    ret = (
-                        self._target_graph.nodes[match.mth.node(entity_name)].get(
-                            entity_attribute, None
-                        )
-                        for match in true_matches
-                    )
-                else:
-                    # Return the full node dictionary with all attributes
-                    ret = (
-                        self._target_graph.nodes[match.mth.node(entity_name)]
-                        for match in true_matches
-                    )
+                # Use EntityAttributeGetter for consistent entity access
+                # If entity_attribute exists: returns specific attribute value
+                # If entity_attribute is None: returns full node dictionary
+                getter = EntityAttributeGetter(data_path)
+                ret = (
+                    getter.evaluate(match, self._target_graph, self._return_edges)
+                    for match in true_matches
+                )
 
             elif entity_name in self._paths:
                 ret = []
@@ -1742,18 +1764,13 @@ class GrandCypherExecutor:
                     ret.append(path)
 
             else:
-                edge_mapping = self._return_edges[entity_name]
                 # We are looking for an edge mapping in the target graph:
-                ret = []
-                for match in true_matches:
-                    host_edges = match.mth.edge(*edge_mapping).edges
-                    ret.append(
-                        get_edge_from_host(
-                            self._target_graph,
-                            host_edges,
-                            entity_attribute,
-                        )
-                    )
+                # Use EntityAttributeGetter for consistent entity access
+                getter = EntityAttributeGetter(data_path)
+                ret = (
+                    getter.evaluate(match, self._target_graph, self._return_edges)
+                    for match in true_matches
+                )
 
             result[data_path] = list(ret)[offset_limit]
         return result
@@ -1868,14 +1885,15 @@ class GrandCypherExecutor:
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
         # Convert all return_requests to strings (including scalar functions) for key matching
-        self._return_requests = [str(item) for item in self._return_requests]
+        # Use a local variable to avoid modifying self._return_requests (breaks reusability)
+        return_requests_str = [str(item) for item in self._return_requests]
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
             self._entity2alias.get(key, key): values
             for key, values in results.items()
-            if key in self._return_requests
-            or self._alias2entity.get(key, key) in self._return_requests
+            if key in return_requests_str
+            or self._alias2entity.get(key, key) in return_requests_str
         }
 
         # TODO: remove this hack
@@ -2763,7 +2781,7 @@ class GrandCypherTransformer(Transformer):
                     # arg.children[1] is Tree attribute_id
                     entity_name = arg.children[0].value
                     attribute_name = arg.children[1].children[0].value
-                    expressions.append(EntityAttributeGetter(entity_name, attribute_name))
+                    expressions.append(EntityAttributeGetter(f"{entity_name}.{attribute_name}"))
             else:
                 # Direct value (shouldn't happen with current grammar)
                 expressions.append(arg)

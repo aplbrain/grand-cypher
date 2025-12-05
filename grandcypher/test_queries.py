@@ -842,7 +842,7 @@ class TestOrderBy:
         assert res["n.name"] == ["Alice", "Bob"]
         assert res["MIN(r.value)"] == [9, 14]
         assert res["MAX(r.value)"] == [40, 14]
-        assert res["COUNT(r.value)"] == [3, 1]
+        assert res["COUNT(r.value)"] == [2, 1]  # COUNT excludes None values
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_aggregation_fails_if_not_requested_in_return(self, graph_type):
