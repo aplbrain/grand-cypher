@@ -7,13 +7,17 @@ to search in a much larger graph database.
 
 """
 
-from typing import Any, Dict, List, Callable, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Hashable, List, Callable, Optional, Tuple, Union
 from collections import OrderedDict
 import random
 import string
 from functools import lru_cache
 import networkx as nx
+from grandcypher.struct import (
+    EdgeHopKey, EdgeMapping, EdgeWithKey, HopAssignment, Match, NodeMapping, generate_edge_hop_specs,
+    generate_hop_assignments, materialize_motif, unify_zero_hop_nodes)
 from lark import Lark, Transformer, v_args, Token, Tree
+from itertools import chain, product
 
 import grandiso
 
@@ -257,6 +261,7 @@ def _is_edge_attr_match(
     host_edge_id: Tuple[str, str, Union[int, str]],
     motif: Union[nx.Graph, nx.MultiDiGraph],
     host: Union[nx.Graph, nx.MultiDiGraph],
+    host_keys: Union[tuple[Hashable], None] = None,
 ) -> bool:
     """
     Check if an edge in the host graph matches the attributes in the motif,
@@ -276,97 +281,295 @@ def _is_edge_attr_match(
     motif_u, motif_v = motif_edge_id
     host_u, host_v = host_edge_id
 
-    # Format edges for both DiGraph and MultiDiGraph
-    motif_edges = _get_edge_attributes(motif, motif_u, motif_v)
-    host_edges = _get_edge_attributes(host, host_u, host_v)
+    if host.is_multigraph():
+        if host_keys is None and host.has_edge(host_u, host_v):
+            host_keys =  host.get_edge_data(host_u, host_v).keys()
+        if not host_keys:
+            host_edges = []
+        else:
+            host_edges = [_get_edge_attributes(host, host_u, host_v, k) for k in host_keys]
+    else:
+        edge = _get_edge_attributes(host, host_u, host_v)
+        if edge is None:
+            host_edges = []
+        else:
+            host_edges: list[dict] = [edge]
 
-    if not motif_edges or not host_edges:
+    # NOTE: assume motif isn't a multi Digraph
+    motif_edge = _get_edge_attributes(motif, motif_u, motif_v)
+
+    # zero hop
+    if motif_edge is None and not host_edges:
+        return True
+
+    if not motif_edge or not host_edges:
         # if there are no edges, they don't match
         return False
 
-    # Aggregate all __labels__ into one set
-    motif_edges = _aggregate_edge_labels(motif_edges)
-    host_edges = _aggregate_edge_labels(host_edges)
+    motif_labels = motif_edge.get("__labels__", set())
+    motif_labels = motif_labels if motif_labels is not None else set()
 
-    motif_types = motif_edges.get("__labels__", set())
-    host_types = host_edges.get("__labels__", set())
+    for host_edge in host_edges:
+        host_labels: set = host_edge.get("__labels__", set())
+        for attr, val in motif_edge.items():
+            if attr == "__labels__":
+                if not motif_labels:
+                    continue
+                elif not host_labels.intersection(motif_labels):
+                    break
+            elif host_edge.get(attr) != val:
+                break
+        else:
+            return True
 
-    if motif_types and not motif_types.intersection(host_types):
-        return False
-
-    for attr, val in motif_edges.items():
-        if attr == "__labels__":
-            continue
-        if host_edges.get(attr) != val:
-            return False
-
-    return True
+    return False
 
 
-def _get_edge_attributes(graph: Union[nx.Graph, nx.MultiDiGraph], u, v) -> Dict:
+def _get_edge_attributes(graph: Union[nx.Graph, nx.MultiDiGraph], u, v, k=None) -> Dict:
     """
     Retrieve edge attributes from a graph, handling both Graph and MultiDiGraph.
     """
     if graph.is_multigraph():
-        return graph.get_edge_data(u, v)
+        if k is None and u != v:
+            raise ValueError("cannot get edge attribues of None key for multigraph")
+        elif k is None:
+            # This suggest that u == v and there is no edge (not even self loop edge)
+            return None
+        return graph.get_edge_data(u, v, key=k)
     else:
-        data = graph.get_edge_data(u, v)
-        return {0: data}  # Wrap in dict to mimic MultiDiGraph structure
+        return graph.get_edge_data(u, v)  # Wrap in dict to mimic MultiDiGraph structure
 
 
-def _aggregate_edge_labels(edges: Dict) -> Dict:
-    """
-    Aggregate '__labels__' attributes from edges into a single set.
-    """
-    aggregated = {"__labels__": set()}
-    for _, attrs in edges.items():
-        if "__labels__" in attrs and attrs["__labels__"]:
-            aggregated["__labels__"].update(attrs["__labels__"])
-            # issue #85 - temporary fix by updating other attributes of the edge
-            # We still need to understand more why we need aggregation.
-            aggregated.update(((k, v) for k, v in attrs.items() if k != '__labels__'))
-        elif "__labels__" not in attrs:
-            aggregated = attrs.copy()
-    return aggregated
-
-
-def _get_entity_from_host(
-    host: Union[nx.DiGraph, nx.MultiDiGraph], entity_name, entity_attribute=None
+def get_node_from_host(
+    host: Union[nx.DiGraph, nx.MultiDiGraph], entity_name, entity_attribute=None,
 ):
-    if entity_name in host.nodes():
-        # We are looking for a node mapping in the target graph:
-        if entity_attribute:
-            # Get the correct entity from the target host graph,
-            # and then return the attribute:
-            return host.nodes[entity_name].get(entity_attribute, None)
-        else:
-            # Otherwise, just return the dict of attributes:
-            return host.nodes[entity_name]
+    data = host.nodes[entity_name]
+    # We are looking for a node mapping in the target graph:
+    if entity_attribute:
+        # Get the correct entity from the target host graph,
+        # and then return the attribute:
+        return data.get(entity_attribute, None)
+    return data
+
+
+def get_edge_from_host(
+    host: Union[nx.DiGraph, nx.MultiDiGraph],
+    entity_name: list[EdgeWithKey],
+    entity_attribute=None
+) -> Union[list[dict], dict, Any]:
+    """
+    Retrieve edge data from a host graph given a list of `EdgeWithKey` objects.
+
+    Parameters
+    ----------
+    host : nx.DiGraph or nx.MultiDiGraph
+        The graph from which to fetch edge attributes.
+
+    entity_name : list[EdgeWithKey]
+        A list of edges (u, v, k, hop_count) that identify edges in the host graph.
+
+    entity_attribute : str, optional
+        If provided, return only this attribute from the edge data.
+        If multiple edges exist, this only works when the returned result is a single dict.
+        Otherwise raises TypeError.
+
+    Returns
+    -------
+    list[dict] | dict | Any
+        Case breakdown:
+        - If no edges found → `[]`
+        - If exactly one edge found:
+            - If no `entity_attribute` → the edge's attribute dict
+            - If `entity_attribute` provided → value of that attribute or None
+        - If multiple edges found:
+            - If no `entity_attribute` → list of attribute dicts
+            - If `entity_attribute` provided → TypeError
+
+    Raises
+    ------
+    TypeError
+        If `entity_attribute` is requested but multiple edges are returned.
+
+    Notes
+    -----
+    Internally relies on `_get_edge_attributes(host, u, v, k)` to fetch data.
+    """
+
+    edge_data: list[dict[dict]] = (
+        _get_edge_attributes(host, e.u, e.v, e.k) for e in entity_name)
+    edge_data = [d for d in edge_data if d is not None]
+    if not edge_data:
+        return []
+    if len(edge_data) == 1:
+        edge_data = edge_data[0]
+
+    if entity_attribute:
+        if isinstance(edge_data, dict):
+            return edge_data.get(entity_attribute)
+        raise TypeError("cannot access attribute in list")
+
     else:
-        # looking for an edge:
-        u, v = entity_name
-        edge_data = _get_edge_attributes(host, u, v)
-        if not edge_data:
-            return None  # print(f"Nothing found for {entity_name} {entity_attribute}")
+        return edge_data
 
-        if entity_attribute:
-            # looking for edge attribute:
-            if host.is_multigraph():
-                # return a list of attribute values for all edges between u and v
-                return [attrs.get(entity_attribute) for attrs in edge_data.values()]
-            else:
-                # return the attribute value for the single edge
-                return edge_data[0].get(entity_attribute)
+
+def find_multiedge_keys(
+    target_graph: Union[nx.DiGraph, nx.MultiDiGraph],
+    match: NodeMapping,
+    edge_hop_map: HopAssignment
+):
+    """
+    Determine which edge keys exist in a host graph for each hop in each HopSpec.
+
+    For each HopSpec inside `edge_hop_map`, this function inspects its hop path
+    (`hop_spec.nodes`) and looks at every consecutive (u → v) pair.
+    It then queries the corresponding host graph edges using the node mapping
+    provided in `match`.
+
+    Behavior differs depending on whether the host is a `MultiDiGraph`:
+
+    - **MultiDiGraph:**
+        Returns a list of available edge keys for each (u, v) pair.
+        If the host graph contains no edge for that pair, returns `[-1]`.
+
+        Example:
+            host edges A→B with keys {0, 2, 5}
+            → result[(A, B)] = [0, 2, 5]
+
+    - **DiGraph:**
+        Edge keys are conceptually always `None`, so:
+        - If an edge exists → `[None]`
+        - If not → `[-1]`
+
+    Parameters
+    ----------
+    target_graph : nx.DiGraph or nx.MultiDiGraph
+        The host graph in which real edges and multiedge keys are queried.
+
+    match : NodeMapping
+        A mapping from motif node names → host node names.
+
+    edge_hop_map : HopAssignment
+        A mapping {MapKey -> HopSpec}, where each HopSpec describes a hop path
+        (e.g., ['A', 'x1', 'x2', 'B']).
+
+    Returns
+    -------
+    dict[tuple[str, str], list[int] | list[None] | list[-1]]
+        A dictionary mapping each hop (u, v) in motif coordinates to:
+            - list of integer edge keys (MultiDiGraph),
+            - [None] if a DiGraph edge exists,
+            - [-1] if no matching edge exists in host.
+
+    Notes
+    -----
+    - Using `-1` to indicate “no valid edge” allows the downstream Cartesian
+      product generator to still function.
+    - Keys are returned *in motif node space*, not host node space.
+    """
+    result = {}
+    for hop_spec in edge_hop_map.values():
+        if not hop_spec:
+            continue
+        edge_paths = hop_spec.nodes
+
+        if isinstance(target_graph, nx.MultiDiGraph):
+            for i in range(len(edge_paths)-1):
+                start = edge_paths[i]
+                end = edge_paths[i+1]
+                if hop_spec.hop_count == 0:
+                    result[(start, end)] = [-1]
+                else:
+                    result[(start, end)] = target_graph.get_edge_data(match[start], match[end])
+                    result[(start, end)] = list(result[(start, end)].keys()) if result[(start, end)] is not None else [-1]
         else:
-            return edge_data
+            for i in range(len(edge_paths)-1):
+                start = edge_paths[i]
+                end = edge_paths[i+1]
+                if hop_spec.hop_count == 0:
+                    result[(start, end)] = [-1]
+                else:
+                    result[(start, end)] = target_graph.get_edge_data(match[start], match[end])
+                    result[(start, end)] = [None] if result[(start, end)] is not None else [-1]
+    return result
 
 
-def _get_edge(host: Union[nx.DiGraph, nx.MultiDiGraph], mapping, match_path, u, v):
-    edge_path = match_path[(u, v)]
-    return [
-        _get_edge_attributes(host, mapping[u], mapping[v])
-        for u, v in zip(edge_path[:-1], edge_path[1:])
-    ]
+def generate_multiedge_edge_hop_key(
+    edge_hop_map: HopAssignment,
+    multi_edge_keys: Dict[tuple[str, str], Optional[int]]
+) -> Generator[list[EdgeHopKey], None, None]:
+    """
+    Generate all possible combinations of edge-hop key assignments across all
+    motif edges that may expand into multi-hop paths.
+
+    This function uses the output from `find_multiedge_keys` (a mapping of
+    (u, v) → list of edge keys) and computes the Cartesian product of all
+    possible key selections, per HopSpec, across all motif edges.
+
+    It yields **one complete assignment at a time**, where each assignment is
+    represented as a list of `EdgeHopKey` objects—one per motif edge.
+
+    Example
+    -------
+    Suppose a motif edge A→B expands into two hops (A→x, x→B) and the host
+    MultiDiGraph has keys:
+        (A, x): [0, 1]
+        (x, B): [5]
+    Then the resulting combinations are:
+        - keys=(0, 5)
+        - keys=(1, 5)
+
+    If a hop has no valid edge (`[-1]`), its corresponding EdgeHopKey will have
+    an **empty tuple** (i.e., no key assignment): `keys=tuple()`.
+
+    Parameters
+    ----------
+    edge_hop_map : HopAssignment
+        A mapping {MapKey -> HopSpec}, describing the node paths for each
+        motif edge.
+
+    multi_edge_keys : dict[(str, str), list[int] | list[None] | list[-1]]
+        Output of `find_multiedge_keys`.
+        Maps each hop (u, v) in motif coordinates → possible edge keys.
+
+    Yields
+    ------
+    list[EdgeHopKey]
+        One full multi-edge hop-key assignment.
+        The list is ordered by the iteration order of `edge_hop_map`.
+
+    Notes
+    -----
+    - `-1` entries (meaning “no valid edge”) are converted into an empty
+      `tuple()` so the calling code can detect hop failure explicitly.
+    - The Cartesian product is computed in two layers:
+        1. For each HopSpec (per motif edge): keys across hops.
+        2. Across all HopSpecs: product of all per-edge sequences.
+    - This generator lazily produces combinations without storing them all,
+      making it scalable for large products.
+    """
+    result: list[list[EdgeHopKey]] = []
+
+    for key, hop_spec in edge_hop_map.items():
+        edge_paths = hop_spec.nodes
+        edge_path_keys = []
+        for i in range(len(edge_paths)-1):
+            start = edge_paths[i]
+            end = edge_paths[i+1]
+            edge_path_keys.append(
+                multi_edge_keys[(start, end)]
+            )
+        result.append(product(*edge_path_keys))
+
+    for row in product(*result):
+        ret = []
+        for key, val in zip(edge_hop_map.keys(), row):
+            ret.append(
+                EdgeHopKey(
+                    edge_id=key,
+                    keys=val if val[0] != -1 else tuple()
+                )
+            )
+        yield ret
 
 
 CONDITION = Callable[[dict, nx.DiGraph, list], bool]
@@ -432,14 +635,15 @@ class CompoundCondition(Condition):
     def __str__(self):
         return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
+    # def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, edge_hop_map = None, edge_hop_key = None) -> bool:
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list) -> bool:
         # Check if this is an ID function call
         if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
             # Extract the entity name from ID(entity_name)
             actual_entity_name = self._entity_id[3:-1]  # Remove "ID(" and ")"
-            if actual_entity_name in match:
+            if actual_entity_name in match.node_mappings:
                 # Return the node ID directly
-                node_id = match[actual_entity_name]
+                node_id = match.node_mappings[actual_entity_name]
                 try:
                     val = self._operator(node_id, self._value)
                 except:
@@ -448,57 +652,49 @@ class CompoundCondition(Condition):
             else:
                 raise IndexError(f"Entity {actual_entity_name} not in match.")
         else:
+            host_entity_id = self._entity_id.split(".")
             if isinstance(self._operator, SUBOP):
                 # SUBOP operator doesn't need a entity id.
-                pass
-            else:
+                val = self._operator(match.node_mappings, self._value)
+            elif host_entity_id[0] in match.node_mappings:
                 # Regular entity attribute access
-                host_entity_id = self._entity_id.split(".")
-                if host_entity_id[0] in match:
-                    host_entity_id[0] = match[host_entity_id[0]]
-                elif host_entity_id[0] in return_edges:
-                    # looking for edge...
-                    edge_mapping = return_edges[host_entity_id[0]]
-                    host_entity_id[0] = (match[edge_mapping[0]], match[edge_mapping[1]])
-                else:
-                    raise IndexError(f"Entity {host_entity_id} not in graph.")
+                host_entity_id[0] = match.node_mappings[host_entity_id[0]]
+                val = self._operator(get_node_from_host(host, host_entity_id[0], host_entity_id[1]), self._value)
+            elif host_entity_id[0] in return_edges:
+                # looking for edge...
+                entity_name, entity_attribute = _data_path_to_entity_name_attribute(self._entity_id)
+                edge_mapping = return_edges[entity_name]
 
-            operator_results = []
-            if isinstance(host, nx.MultiDiGraph):
-                # if any of the relations between nodes satisfies condition, return True
-                r_vals = _get_entity_from_host(host, *host_entity_id)
-                r_vals = [r_vals] if not isinstance(r_vals, list) else r_vals
-                for r_val in r_vals:
-                    try:
-                        operator_results.append(self._operator(r_val, self._value))
-                    except:
-                        operator_results.append(False)
-                val = any(operator_results)
+                host_edges = match.mth.edge(*edge_mapping).edges
+                val = self._operator(get_edge_from_host(host, host_edges, entity_attribute), self._value)
             else:
-                try:
-                    if isinstance(self._operator, SUBOP):
-                        val = self._operator(match, self._value)
-                    else:
-                        val = self._operator(_get_entity_from_host(host, *host_entity_id), self._value)
-                except:
-                    val = False
-
-                operator_results.append(val)
-
+                raise IndexError(f"Entity {host_entity_id} not in graph.")
+        operator_results = [val]
+        if val is None:
+            val is False
         if val != self._should_be:
             return False, operator_results
         return True, operator_results
 
 
+def none_wrapper(func) -> Callable[[Any, Any], Union[bool, None]]:
+    def inner(x, y) -> Union[bool, None]:
+        try:
+            return func(x, y)
+        except TypeError:
+            return None
+    return inner
+
+
 _OPERATORS = {
-    "=": LambdaCompareCondition(lambda x, y: x == y, "="),
-    "==": LambdaCompareCondition(lambda x, y: x == y, "=="),
-    ">=": LambdaCompareCondition(lambda x, y: x >= y, ">="),
-    "<=": LambdaCompareCondition(lambda x, y: x <= y, "<="),
-    "<": LambdaCompareCondition(lambda x, y: x < y, "<"),
-    ">": LambdaCompareCondition(lambda x, y: x > y, ">"),
-    "!=": LambdaCompareCondition(lambda x, y: x != y, "!="),
-    "<>": LambdaCompareCondition(lambda x, y: x != y, "<>"),
+    "=": LambdaCompareCondition(none_wrapper(lambda x, y: x == y), "="),
+    "==": LambdaCompareCondition(none_wrapper(lambda x, y: x == y), "=="),
+    ">=": LambdaCompareCondition(none_wrapper(lambda x, y: x >= y), ">="),
+    "<=": LambdaCompareCondition(none_wrapper(lambda x, y: x <= y), "<="),
+    "<": LambdaCompareCondition(none_wrapper(lambda x, y: x < y), "<"),
+    ">": LambdaCompareCondition(none_wrapper(lambda x, y: x > y), ">"),
+    "!=": LambdaCompareCondition(none_wrapper(lambda x, y: x != y), "!="),
+    "<>": LambdaCompareCondition(none_wrapper(lambda x, y: x != y), "<>"),
     "in": LambdaCompareCondition(lambda x, y: x in y, "in"),
     "contains": LambdaCompareCondition(lambda x, y: y in x, "contains"),
     "is": LambdaCompareCondition(lambda x, y: x is y, "is"),
@@ -657,14 +853,6 @@ class GrandCypherExecutor:
         self._matches = None
 
     def _lookup(self, data_paths: List[str], offset_limit) -> Dict[str, List]:
-        def _filter_edge(edge, where_results):
-            # no where condition -> return edge
-            if where_results == []:
-                return edge
-            else:
-                # exclude edge(s) from multiedge that don't satisfy the where condition
-                edge = {k: v for k, v in edge[0].items() if where_results[k] is True}
-                return [edge]
 
         if not data_paths and not self.run_without_return:
             return {}
@@ -673,10 +861,10 @@ class GrandCypherExecutor:
 
         # Get true matches FIRST, before processing data paths
         true_matches = self._get_true_matches()
-
         result = {}
         processed_paths = set()  # Keep track of processed paths
 
+        # handling RETURN ID(A)
         for data_path in data_paths:
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
             # Special handling for ID function
@@ -685,7 +873,7 @@ class GrandCypherExecutor:
                 original_entity = entity_name[3:-1]
                 if original_entity in motif_nodes:
                     # Return the node ID directly instead of the node attributes
-                    ret = [mapping[0][original_entity] for mapping, _ in true_matches]
+                    ret = [match.mth.node(original_entity) for match in true_matches]
                     result[data_path] = ret[offset_limit]
                     result[original_entity] = ret[
                         offset_limit
@@ -717,25 +905,28 @@ class GrandCypherExecutor:
                     # Get the correct entity from the target host graph,
                     # and then return the attribute:
                     ret = (
-                        self._target_graph.nodes[mapping[0][entity_name]].get(
+                        self._target_graph.nodes[match.mth.node(entity_name)].get(
                             entity_attribute, None
                         )
-                        for mapping, _ in true_matches
+                        for match in true_matches
                     )
                 else:
                     # Return the full node dictionary with all attributes
                     ret = (
-                        self._target_graph.nodes[mapping[0][entity_name]]
-                        for mapping, _ in true_matches
+                        self._target_graph.nodes[match.mth.node(entity_name)]
+                        for match in true_matches
                     )
 
             elif entity_name in self._paths:
                 ret = []
-                for mapping, _ in true_matches:
-                    mapping = mapping[0]
+                # for mapping, _, _ in true_matches:
+                    # mapping = mapping[0]
+                for match in true_matches:
+                    mapping = match.node_mappings
                     path, nodes = [], list(mapping.values())
                     for x, node in enumerate(nodes):
                         # Edge
+                        # TODO: this edge getting might not be correct in the case of MultiGraph
                         if x > 0:
                             path.append(
                                 self._target_graph.get_edge_data(nodes[x - 1], node)
@@ -747,71 +938,20 @@ class GrandCypherExecutor:
                     ret.append(path)
 
             else:
-                mapping_u, mapping_v = self._return_edges[data_path.split(".")[0]]
+                edge_mapping = self._return_edges[entity_name]
                 # We are looking for an edge mapping in the target graph:
-                is_hop = self._motif.edges[(mapping_u, mapping_v, 0)]["__is_hop__"]
-                ret = (
-                    _filter_edge(
-                        _get_edge(
+                ret = []
+                for match in true_matches:
+                    host_edges = match.mth.edge(*edge_mapping).edges
+                    ret.append(
+                        get_edge_from_host(
                             self._target_graph,
-                            mapping[0],
-                            match_path,
-                            mapping_u,
-                            mapping_v,
-                        ),
-                        mapping[1],
+                            host_edges,
+                            entity_attribute,
+                        )
                     )
-                    for mapping, match_path in true_matches
-                )
-                ret = (r[0] if is_hop else r for r in ret)
-                # we keep the original list if len > 2 (edge hop 2+)
-
-                # Get all edge labels from the motif -- this is used to filter the relations for multigraphs
-                motif_edge_labels = set()
-                for edge in self._motif.get_edge_data(mapping_u, mapping_v).values():
-                    if edge.get("__labels__", None):
-                        motif_edge_labels.update(edge["__labels__"])
-
-                if entity_attribute:
-                    # Get the correct entity from the target host graph,
-                    # and then return the attribute:
-                    if (
-                        isinstance(self._motif, nx.MultiDiGraph)
-                        and len(motif_edge_labels) > 0
-                    ):
-                        # filter the retrieved edge(s) based on the motif edge labels
-                        filtered_ret = []
-                        for r in ret:
-                            r = {
-                                k: v
-                                for k, v in r.items()
-                                if v.get("__labels__", None).intersection(
-                                    motif_edge_labels
-                                )
-                            }
-                            if len(r) > 0:
-                                filtered_ret.append(r)
-
-                        ret = filtered_ret
-
-                    # get the attribute from the retrieved edge(s)
-                    ret_with_attr = []
-                    for r in ret:
-                        r_attr = {}
-                        if isinstance(r, dict):
-                            r = [r]
-                        for el in r:
-                            for i, v in enumerate(el.values()):
-                                r_attr[(i, list(v.get("__labels__", [i]))[0])] = v.get(
-                                    entity_attribute, None
-                                )
-                                # eg, [{(0, 'paid'): 70, (1, 'paid'): 90}, {(0, 'paid'): 400, (1, 'friend'): None, (2, 'paid'): 650}]
-                            ret_with_attr.append(r_attr)
-
-                    ret = ret_with_attr
 
             result[data_path] = list(ret)[offset_limit]
-
         return result
 
     def _format_aggregation_key(self, func, entity):
@@ -826,64 +966,39 @@ class GrandCypherExecutor:
                 grouped_data[group_tuple] = []
             grouped_data[group_tuple].append(results[entity][i])
 
-        def _collate_data(data, unique_labels, func):
+
+        def _collate_data(data, func):
             # for ["COUNT", "SUM", "AVG"], we treat None as 0
             if func in ["COUNT", "SUM", "AVG"]:
-                collated_data = {
-                    label: [
-                        (v or 0)
-                        for rel in data
-                        for k, v in rel.items()
-                        if k[1] == label
-                    ]
-                    for label in unique_labels
-                }
-            # for ["MAX", "MIN"], we treat None as non-existent
+                collated_data = [
+                    # label: [
+                    (v or 0)
+                    for v in data
+                ]
             elif func in ["MAX", "MIN"]:
-                collated_data = {
-                    label: [
-                        v
-                        for rel in data
-                        for k, v in rel.items()
-                        if (k[1] == label and v is not None)
-                    ]
-                    for label in unique_labels
-                }
+                collated_data = [
+                    v
+                    for v in data
+                ]
+
 
             return collated_data
 
         # Apply aggregation function
         aggregate_results = {}
         for group, data in grouped_data.items():
-            # data => [{(0, 'paid'): 70, (1, 'paid'): 90}]
-            unique_labels = set([k[1] for rel in data for k in rel.keys()])
-            collated_data = _collate_data(data, unique_labels, func)
+            collated_data = _collate_data(data, func)
             if func == "COUNT":
-                count_data = {label: len(data) for label, data in collated_data.items()}
-                aggregate_results[group] = count_data
+                aggregate_results[group] = len(collated_data)
             elif func == "SUM":
-                sum_data = {label: sum(data) for label, data in collated_data.items()}
-                aggregate_results[group] = sum_data
+                aggregate_results[group] = sum(collated_data)
             elif func == "AVG":
-                sum_data = {label: sum(data) for label, data in collated_data.items()}
-                count_data = {label: len(data) for label, data in collated_data.items()}
-                avg_data = {
-                    label: (
-                        sum_data[label] / count_data[label]
-                        if count_data[label] > 0
-                        else 0
-                    )
-                    for label in sum_data
-                }
-                aggregate_results[group] = avg_data
+                aggregate_results[group] = sum(collated_data) / len(collated_data)
             elif func == "MAX":
-                max_data = {label: max(data) for label, data in collated_data.items()}
-                aggregate_results[group] = max_data
+                aggregate_results[group] = max([(d if d is not None else -float("inf")) for d in collated_data])
             elif func == "MIN":
-                min_data = {label: min(data) for label, data in collated_data.items()}
-                aggregate_results[group] = min_data
-
-        aggregate_results = [v for v in aggregate_results.values()]
+                aggregate_results[group] = min([(d if d is not None else float("inf")) for d in collated_data ])
+        # aggregate_results = [v for v in aggregate_results.values()]
         return aggregate_results
 
     def returns(self, ignore_limit=False):
@@ -908,10 +1023,20 @@ class GrandCypherExecutor:
             aggregated_results = {}
             for func, entity in self._aggregate_functions:
                 aggregated_data = self.aggregate(func, results, entity, group_keys)
+                aggregated_values = list(aggregated_data.values())
+                aggregated_keys = list(aggregated_data.keys())
                 func_key = self._format_aggregation_key(func, entity)
-                aggregated_results[func_key] = aggregated_data
+                aggregated_results[func_key] = aggregated_values
                 self._return_requests.append(func_key)
+                # TODO: the group_keys is the same for all func
+                # let's have aggregated keys 1st
+                # then have aggregated values
+                # so we don't have to repeat the groups key population here
+                # for i in range(len(gro up_keys)):
+                #     results[group_keys[i]] = [k[i] for k in aggregated_keys]
             results.update(aggregated_results)
+            for i in range(len(group_keys)):
+                results[group_keys[i]] = [k[i] for k in aggregated_keys]
 
         # update the results with the given alias(es)
         results = {self._entity2alias.get(k, k): v for k, v in results.items()}
@@ -996,7 +1121,7 @@ class GrandCypherExecutor:
                         # (for node attributes) single values
                         indices = sorted(
                             indices,
-                            key=lambda i: sort_list[i],
+                            key=lambda i: float("inf") if sort_list[i] is None else sort_list[i],
                             reverse=(direction == "DESC"),
                         )
 
@@ -1076,7 +1201,7 @@ class GrandCypherExecutor:
 
         return paginated_results
 
-    def _get_true_matches(self):
+    def _get_true_matches(self) -> tuple[Match]:
         """Get the true matches after applying WHERE conditions and hints.
         Returns the matches along with their paths.
 
@@ -1085,60 +1210,137 @@ class GrandCypherExecutor:
         """
         if not self._matches:
             self_matches = []
-            self_matche_paths = []
             complete = False
 
-            for my_motif, edge_hop_map in self._edge_hop_motifs(self._motif):
+            for my_motif, edge_hop_map, alias in self._edge_hop_motifs(self._motif):
                 # Iteration is complete
                 if complete:
                     break
 
-                # Process zero hop edges
-                zero_hop_edges = [
-                    k for k, v in edge_hop_map.items() if len(v) == 2 and v[0] == v[1]
-                ]
+                # alias is provided - no need to rebuild UnionFind
+                zero_hop_nodes = set(
+                    chain.from_iterable(hs.edge_id for hs in edge_hop_map.values() if hs.hop_count == 0))
+
+                matches = self._matches_iter(my_motif)
 
                 # Collect all valid matches before applying pagination
-                for match in self._matches_iter(my_motif):
-
-                    # Handle zero hop edges
+                for match in matches:
+                    match = Match(
+                        node_mappings=match,
+                        where_results=None,
+                        edge_mapping=None
+                    )
+                    # Handle zero hop nodes
+                    # In zero edge hop edges, we check if the node are actually the collapsed node
                     valid_match = True
-                    for a, b in zero_hop_edges:
-                        if b in match and match[b] != match[a]:
-                            valid_match = False
-                            break
+                    for u1 in zero_hop_nodes:
+                        # take out the collapsed to node
+                        u2 = alias[u1]
                         if not _is_node_attr_match(
-                            b, match[a], self._motif, self._target_graph
+                            u1, match.mth.node(u2), self._motif, self._target_graph
                         ):
                             valid_match = False
                             break
-                        match[b] = match[a]
+                        # the match might not contain the mapping for the un-collapsed node, let's put it in
+                        match.node_mappings[u1] = match.node_mappings[u2]
 
                     if not valid_match:
                         continue
-
-                    # Apply WHERE condition if present
-                    if self._where_condition:
-                        satisfies_where, where_results = self._where_condition(
-                            match, self._target_graph, self._return_edges
+                    multi_edge_keys = find_multiedge_keys(self._target_graph, match.node_mappings, edge_hop_map)
+                    for edge_key_mapping in generate_multiedge_edge_hop_key(edge_hop_map, multi_edge_keys):
+                        edge_mapping = EdgeMapping(
+                            edge_hop_map=edge_hop_map,
+                            edge_key_map={e.edge_id: e for e in edge_key_mapping}
                         )
-                        if not satisfies_where:
+                        edges = chain.from_iterable(edge_path.edges for edge_path in edge_mapping.edge_paths)
+
+                        # DOUBLE CHECK EDGE
+                        # =================================================
+                        # CASE1 multigraph
+                        # Since the match_iter grandiso doesn't return the proper edge key for multigraph
+                        # we need to double check them here to make sure matches correct
+                        # For example, consider this test case
+                        # host = nx.MultiDiGraph()
+                        # host.add_node("a", name="Alice", age=30)
+                        # host.add_node("b", name="Bob", age=40)
+                        # host.add_node("c", name="Charlie", age=50)
+                        # host.add_edge("a", "b", __labels__={"friend"}, years=3)
+                        # host.add_edge("a", "c", __labels__={"colleague"}, years=10)
+                        # host.add_edge("b", "c", __labels__={"colleague"}, duration=10)
+                        # host.add_edge("b", "c", __labels__={"mentor"}, years=2)
+                        # qry = """
+                        # MATCH (a)-[r:colleague]->(b)
+                        # RETURN a.name, b.name, r.duration
+                        # """
+                        # there are two edge between b and c, with label colleague and mentor
+                        # the mentor should be rejected here
+                        # ================================================
+                        # CASE 2: equijoin
+                        # The grandiso doesn't check when we explicitly do the equijoin
+                        # G = nx.DiGraph()
+                        # G.add_node("x")
+                        # G.add_node("y")
+                        # G.add_node("z")
+                        # G.add_edge("x", "y")
+                        # G.add_edge("y", "x")
+                        # G.add_edge("x", "x")
+                        # G.add_edge("z", "x")
+                        # qry = """
+                        # MATCH (n)-->(n)
+                        # RETURN ID(n)
+                        # """
+                        # Grandiso return both x and y, but only x is correct, y is not
+                        valid_match = True
+                        for edge in edges:
+                            # SKIP if hop = 0, there is no edge
+                            if edge.h == 0:
+                                continue
+                            motif_u, motif_v = edge.u, edge.v
+                            motif_u, motif_v = alias.get(motif_u, motif_u), alias.get(motif_v, motif_v)
+                            host_u, host_v = match.mth.node(motif_u), match.mth.node(motif_v)
+                            # skip if there is 1 edge between 2 nodes and they are different (not equijoin)
+                            if edge.u != edge.v and self._target_graph.number_of_edges(host_u, host_v) < 2:
+                                continue
+                            host_keys = (edge.k,) if edge.k is not None else tuple()
+                            if not _is_edge_attr_match(motif_edge_id=(motif_u, motif_v),
+                                                        host_edge_id=(host_u, host_v),
+                                                        motif=my_motif,
+                                                        host=self._target_graph,
+                                                        host_keys=host_keys):
+                                valid_match = False
+                                break
+                        if not valid_match:
                             continue
-                    else:
-                        where_results = []
 
-                    self_matches.append((match, where_results))
-                    self_matche_paths.append(edge_hop_map)
+                        match = Match(
+                            node_mappings=match.node_mappings,
+                            where_results=None,
+                            edge_mapping=edge_mapping
+                        )
 
-                    # Check if limit reached; stop ONLY IF we are not ordering
-                    if self._is_limit(len(self_matches)) and not self._order_by:
-                        complete = True
+                        # Apply WHERE condition if present
+                        if self._where_condition:
+                            satisfies_where, where_results = self._where_condition(
+                                match, self._target_graph, self._return_edges
+                            )
+                            if not satisfies_where:
+                                continue
+                        else:
+                            where_results = []
+                        match.where_results = where_results
+                        self_matches.append(match)
+
+                        # Check if limit reached; stop ONLY IF we are not ordering
+                        if self._is_limit(len(self_matches)) and not self._order_by:
+                            complete = True
+                            break
+
+                    if complete:
                         break
 
-            self._matches = self_matches
-            self._matche_paths = self_matche_paths
+            self._matches = tuple(self_matches)
 
-        return list(zip(self._matches, self._matche_paths))
+        return self._matches
 
     def _matches_iter(self, motif):
         hinter = Hinter(_is_node_attr_match, _is_edge_attr_match)
@@ -1169,6 +1371,7 @@ class GrandCypherExecutor:
         # Get list of all match iterators
         iterators = []
         for c in nx.weakly_connected_components(motif):
+
             c_motif = motif.subgraph(c)
             # NOTE: making sure only giving hints to "relevant" nodes.
             c_hints = hinter.take_hints_with_keys(hints, c)
@@ -1223,75 +1426,30 @@ class GrandCypherExecutor:
                     join = match
             yield from join
 
-    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> List[Tuple[nx.Graph, dict]]:
-        """generate a list of edge-hop-expanded motif with edge-hop-map.
+    def _edge_hop_motifs(self, motif: nx.MultiDiGraph) -> Generator[Tuple[nx.Graph, HopAssignment, dict], None, None]:
+        """Generate edge-hop-expanded motifs with node unification.
 
         Arguments:
             motif (nx.Graph): The motif graph
 
-        Returns:
-            List[Tuple[nx.Graph, dict]]: list of motif and edge-hop-map. \
-                edge-hop-map is a mapping from an edge to a real edge path
-                where a real edge path can have more than 2 element (hop >= 2)
-                or it can have 2 same element (hop = 0).
+        Yields:
+            Tuple[nx.Graph, HopAssignment, dict]:
+                - my_motif: Unified and materialized motif
+                - edge_hop_map: Original hop assignment (unchanged)
+                - alias: Mapping from original nodes to representatives
         """
-        new_motif = nx.MultiDiGraph()
-        for n in motif.nodes:
-            if motif.out_degree(n) == 0 and motif.in_degree(n) == 0:
-                new_motif.add_node(n, **motif.nodes[n])
-        motifs: List[Tuple[nx.DiGraph, dict]] = [(new_motif, {})]
+        hop_specs = generate_edge_hop_specs(motif)
+        hop_assignments = list(generate_hop_assignments(hop_specs))
 
-        if motif.is_multigraph():
-            edge_iter = motif.edges(keys=True)
-        else:
-            edge_iter = motif.edges(keys=False)
+        for hop_assignment in hop_assignments:
+            # Step 1: Materialize (without unification)
+            materialized_motif = materialize_motif(hop_assignment, motif)
 
-        for edge in edge_iter:
-            if motif.is_multigraph():
-                u, v, k = edge
-            else:
-                u, v = edge
-                k = 0  # Dummy key for DiGraph
-            new_motifs = []
-            min_hop = motif.edges[u, v, k]["__min_hop__"]
-            max_hop = motif.edges[u, v, k]["__max_hop__"]
-            edge_type = motif.edges[u, v, k]["__labels__"]
-            hops = []
-            if min_hop == 0:
-                new_motif = nx.MultiDiGraph()
-                new_motif.add_node(u, **motif.nodes[u])
-                new_motifs.append((new_motif, {(u, v): (u, u)}))
-            elif min_hop >= 1:
-                for _ in range(1, min_hop):
-                    hops.append(shortuuid())
-            for _ in range(max(min_hop, 1), max_hop):
-                new_edges = [u] + hops + [v]
-                new_motif = nx.MultiDiGraph()
-                new_motif.add_edges_from(
-                    zip(new_edges, new_edges[1:]), __labels__=edge_type
-                )
-                new_motif.add_node(u, **motif.nodes[u])
-                new_motif.add_node(v, **motif.nodes[v])
-                new_motifs.append((new_motif, {(u, v): tuple(new_edges)}))
-                hops.append(shortuuid())
-            motifs = self._product_motifs(motifs, new_motifs)
-        return motifs
+            # Step 2: Unify zero-hop nodes and get alias
+            my_motif, alias = unify_zero_hop_nodes(materialized_motif, hop_assignment.values())
 
-    def _product_motifs(
-        self,
-        motifs_1: List[Tuple[nx.Graph, dict]],
-        motifs_2: List[Tuple[nx.Graph, dict]],
-    ):
-        new_motifs = []
-        for motif_1, mapping_1 in motifs_1:
-            for motif_2, mapping_2 in motifs_2:
-                motif = nx.DiGraph()
-                motif.add_nodes_from(motif_1.nodes.data())
-                motif.add_nodes_from(motif_2.nodes.data())
-                motif.add_edges_from(motif_1.edges.data())
-                motif.add_edges_from(motif_2.edges.data())
-                new_motifs.append((motif, {**mapping_1, **mapping_2}))
-        return new_motifs
+            # Step 3: Yield unified motif, original hop_assignment, and alias
+            yield my_motif, hop_assignment, alias
 
     def _is_limit(self, length):
         """Check if the current number of results has reached the limit.
