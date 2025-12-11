@@ -88,7 +88,9 @@ return_clause       : "return"i distinct_return? return_item ("," return_item)*
 return_item         : (entity_id | aggregation_function | scalar_function | entity_id "." attribute_id) ( "AS"i alias )?
 alias               : CNAME
 
-aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
+aggregation_function : AGGREGATE_FUNC "(" agg_argument ")"
+agg_argument        : scalar_function
+                    | entity_id ( "." attribute_id )?
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN" | "COLLECT"
 attribute_id         : CNAME
 
@@ -751,16 +753,17 @@ class AggregationFunction(Condition):
     Examples: COUNT, SUM, AVG, MAX, MIN
     """
 
-    def __init__(self, entity: str, entity_attribute: Optional[str] = None):
+    def __init__(self, entity, entity_attribute: Optional[str] = None):
         """
         Initialize aggregation function.
 
         Args:
-            entity: Entity name (e.g., 'r' in COUNT(r))
+            entity: Entity name (e.g., 'r' in COUNT(r)) OR ScalarFunction (e.g., size(r) in AVG(size(r)))
             entity_attribute: Optional attribute (e.g., 'value' in SUM(r.value))
         """
         self._entity = entity
         self._entity_attribute = entity_attribute
+        self._is_scalar_function = isinstance(entity, ScalarFunction)
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, Any]:
@@ -780,31 +783,48 @@ class AggregationFunction(Condition):
         raise NotImplementedError(f"{self.__class__.__name__}.evaluate() must be implemented")
 
     def __str__(self) -> str:
-        """String representation for result keys: COUNT(r) or SUM(r.value)"""
-        entity_str = self._entity
-        if self._entity_attribute:
-            entity_str += f".{self._entity_attribute}"
+        """String representation for result keys: COUNT(r) or SUM(r.value) or AVG(size(r))"""
+        if self._is_scalar_function:
+            # Scalar function: use its string representation
+            entity_str = str(self._entity)
+        else:
+            # Regular entity reference
+            entity_str = self._entity
+            if self._entity_attribute:
+                entity_str += f".{self._entity_attribute}"
         return f"{self.__class__.__name__}({entity_str})"
 
-    def _group_matches(self, scope: dict, group_keys: List[str]) -> Dict[tuple, List[Any]]:
+    def _group_matches(self, scope: dict, group_keys: List[str],
+                      matches: List[Match] = None, host: nx.DiGraph = None,
+                      return_edges: dict = None) -> Dict[tuple, List[Any]]:
         """
         Group values and extract data for aggregation using scope.
 
         Uses pre-computed values from scope when available (RETURN case),
-        otherwise would need fallback extraction (future WITH case).
+        OR evaluates scalar functions per-match if entity is a ScalarFunction.
 
         Args:
             scope: Pre-computed values from outer context (e.g., {"n.name": [...], "r.value": [...]})
             group_keys: Keys to group by (e.g., ["n.name"])
+            matches: List of matches (needed for scalar function evaluation)
+            host: Target graph (needed for scalar function evaluation)
+            return_edges: Edge mappings (needed for scalar function evaluation)
 
         Returns:
             Dict mapping group_tuple -> list of values to aggregate
         """
-        # Build entity path: "r" or "r.value"
-        entity_path = self._entity + ('.' + self._entity_attribute if self._entity_attribute else '')
+        # If entity is a scalar function, evaluate it for each match
+        if self._is_scalar_function:
+            entity_values = []
+            for match in matches:
+                value = self._entity(match, host, return_edges, scope=None)
+                entity_values.append(value)
+        else:
+            # Build entity path: "r" or "r.value"
+            entity_path = self._entity + ('.' + self._entity_attribute if self._entity_attribute else '')
 
-        # Get entity values from scope (already extracted by _lookup)
-        entity_values = scope.get(entity_path, [])
+            # Get entity values from scope (already extracted by _lookup)
+            entity_values = scope.get(entity_path, [])
 
         # Group by group_keys (adapted from old aggregate() method)
         grouped_data = {}
@@ -828,7 +848,7 @@ class COUNT(AggregationFunction):
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, int]:
-        grouped = self._group_matches(scope, group_keys)
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
         # COUNT only counts non-null values (filter out None)
         return {group: sum(1 for v in values if v is not None) for group, values in grouped.items()}
 
@@ -841,7 +861,7 @@ class SUM(AggregationFunction):
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, float]:
-        grouped = self._group_matches(scope, group_keys)
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
         # SUM treats None as 0
         return {group: sum(v or 0 for v in values)
                 for group, values in grouped.items()}
@@ -855,7 +875,7 @@ class AVG(AggregationFunction):
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, float]:
-        grouped = self._group_matches(scope, group_keys)
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
         # AVG treats None as 0
         result = {}
         for group, values in grouped.items():
@@ -872,7 +892,7 @@ class MAX(AggregationFunction):
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, Any]:
-        grouped = self._group_matches(scope, group_keys)
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
         # MAX treats None as -infinity
         return {group: max((d if d is not None else -float("inf")) for d in values)
                 for group, values in grouped.items()}
@@ -886,7 +906,7 @@ class MIN(AggregationFunction):
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, Any]:
-        grouped = self._group_matches(scope, group_keys)
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
         # MIN treats None as +infinity
         return {group: min((d if d is not None else float("inf")) for d in values)
                 for group, values in grouped.items()}
@@ -900,7 +920,7 @@ class COLLECT(AggregationFunction):
 
     def evaluate(self, matches: List[Match], host: nx.DiGraph,
                  return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, list]:
-        grouped = self._group_matches(scope, group_keys)
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
         # Collect all values (including None) into lists
         return {group: list(values) for group, values in grouped.items()}
 
@@ -1841,7 +1861,7 @@ class GrandCypherExecutor:
                 key
                 for key in results.keys()
                 if not any(
-                    key.endswith(
+                    not agg_func._is_scalar_function and key.endswith(
                         agg_func._entity + ('.' + agg_func._entity_attribute if agg_func._entity_attribute else '')
                     )
                     for agg_func in self._aggregate_functions
@@ -2320,9 +2340,10 @@ class GrandCypherTransformer(Transformer):
                     if alias:
                         # Use str(agg_func) for alias key: "COUNT(r)", "SUM(r.value)", etc.
                         self._executors[-1]._entity2alias[str(agg_func)] = alias
-                    # Add full entity path to aggregation_attributes for _lookup
-                    entity_path = agg_func._entity + ('.' + agg_func._entity_attribute if agg_func._entity_attribute else '')
-                    self._executors[-1]._aggregation_attributes.add(entity_path)
+                    # Add full entity path to aggregation_attributes for _lookup (only for entity references)
+                    if not agg_func._is_scalar_function:
+                        entity_path = agg_func._entity + ('.' + agg_func._entity_attribute if agg_func._entity_attribute else '')
+                        self._executors[-1]._aggregation_attributes.add(entity_path)
                     # Store AggregationFunction object, not tuple
                     self._executors[-1]._aggregate_functions.append(agg_func)
                 else:
@@ -2353,15 +2374,34 @@ class GrandCypherTransformer(Transformer):
     def _parse_aggregation_token(self, item: Tree) -> AggregationFunction:
         """
         Parse the aggregation function token and return an AggregationFunction object.
-            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Token('CNAME', 'r'), Tree('attribute_id', [Token('CNAME', 'value')])])
-            output: SUM('r', 'value') object
+            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Tree('agg_argument', [...])])
+            output: SUM('r', 'value') object or SUM(scalar_function) object
         """
         func_name = str(item.children[0].value).upper()  # COUNT, SUM, AVG, MAX, MIN
-        entity = str(item.children[1].value)
-        entity_attribute = None
+        agg_arg = item.children[1]  # Tree('agg_argument', [...])
 
-        if len(item.children) > 2:
-            entity_attribute = str(item.children[2].children[0].value)
+        # Check if argument is a scalar function or entity reference
+        if isinstance(agg_arg, Tree) and agg_arg.data == "agg_argument":
+            arg_child = agg_arg.children[0]
+
+            # Case 1: Scalar function argument (e.g., size(relationships(r)))
+            if isinstance(arg_child, ScalarFunction):
+                # Scalar function was already parsed by transformer
+                entity = arg_child
+                entity_attribute = None
+
+            # Case 2: Entity reference (e.g., r.value or r)
+            else:
+                entity = str(arg_child.value) if hasattr(arg_child, 'value') else str(arg_child)
+                entity_attribute = None
+
+                # Check for attribute (e.g., r.value)
+                if len(agg_arg.children) > 1 and isinstance(agg_arg.children[1], Tree):
+                    entity_attribute = str(agg_arg.children[1].children[0].value)
+        else:
+            # Fallback for old format (backward compatibility)
+            entity = str(agg_arg.value) if hasattr(agg_arg, 'value') else str(agg_arg)
+            entity_attribute = None
 
         # Create appropriate AggregationFunction class instance
         func_class = {
