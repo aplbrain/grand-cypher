@@ -3524,6 +3524,100 @@ class TestSIZEFunction:
         # Check that avg_length is calculated for nested scalar function
         assert all(isinstance(al, (int, float)) for al in res["avg_length"])
 
+    def test_size_with_literal_string(self):
+        """Test size() with literal string values"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+
+        qry = """
+        MATCH (n)
+        RETURN size("hello") AS len
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert res["len"] == [5]
+
+    def test_size_with_string_attribute(self):
+        """Test size() with string attributes from nodes"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, size(n.name) AS name_length
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Verify each name has correct length
+        for name, length in zip(res["n.name"], res["name_length"]):
+            assert length == len(name)
+
+        assert 5 in res["name_length"]  # "Alice"
+        assert 3 in res["name_length"]  # "Bob"
+        assert 7 in res["name_length"]  # "Charlie"
+
+    def test_size_with_empty_string(self):
+        """Test size() with empty string"""
+        G = nx.DiGraph()
+        G.add_node("a", name="")
+
+        qry = """
+        MATCH (n)
+        RETURN size(n.name) AS len
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert res["len"] == [0]
+
+    def test_size_with_literal_empty_string(self):
+        """Test size() with literal empty string"""
+        G = nx.DiGraph()
+        G.add_node("a")
+
+        qry = """
+        MATCH (n)
+        RETURN size("") AS len
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert res["len"] == [0]
+
+    def test_size_string_in_where_clause(self):
+        """Test size() with strings in WHERE clause"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Alexander")
+
+        qry = """
+        MATCH (n)
+        WHERE size(n.name) > 5
+        RETURN n.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Only "Alexander" has more than 5 characters
+        assert res["n.name"] == ["Alexander"]
+
+    def test_size_with_various_string_lengths(self):
+        """Test size() with various string lengths"""
+        G = nx.DiGraph()
+        G.add_node("a", city="NYC")
+        G.add_node("b", city="Los Angeles")
+        G.add_node("c", city="SF")
+
+        qry = """
+        MATCH (n)
+        RETURN n.city, size(n.city) AS city_len
+        ORDER BY city_len
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Lengths should be 2, 3, 11 (SF, NYC, Los Angeles)
+        assert sorted(res["city_len"]) == [2, 3, 11]
+
 
 class TestListPredicatesCombined:
     """Tests combining multiple list predicates.

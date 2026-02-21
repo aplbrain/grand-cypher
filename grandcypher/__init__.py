@@ -95,7 +95,7 @@ AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN" | "COLLECT"
 attribute_id         : CNAME
 
 scalar_function      : "id"i "(" entity_id ")" -> id_function
-                     | "size"i "(" list_expression ")" -> size_function
+                     | "size"i "(" size_arg ")" -> size_function
                      | "tolower"i "(" scalar_func_arg ")" -> tolower_function
                      | "toupper"i "(" scalar_func_arg ")" -> toupper_function
                      | "trim"i "(" scalar_func_arg ")" -> trim_function
@@ -104,6 +104,11 @@ scalar_function      : "id"i "(" entity_id ")" -> id_function
 
 scalar_func_arg      : scalar_function
                      | entity_id ("." attribute_id)?
+
+size_arg             : list_expression
+                     | size_literal
+
+size_literal         : ESTRING
 
 coalesce_args        : coalesce_arg ("," coalesce_arg)*
 coalesce_arg         : value
@@ -712,6 +717,15 @@ class EntityAttributeGetter:
         return f"EntityAttributeGetter({self.entity!r})"
 
 
+class LiteralValue:
+    """Wrapper to mark a value as a literal from the query (not an entity reference)."""
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return f"LiteralValue({self.value!r})"
+
+
 class ID(ScalarFunction):
     """
     Implements id() scalar function.
@@ -1289,35 +1303,59 @@ class SINGLE(Condition):
 class SIZE(ScalarFunction):
     """
     Implements size() scalar function.
-    Returns the length of a list as an integer.
+    Returns the length of a list or string as an integer.
 
     Can be used in:
     - WHERE clauses: WHERE size(r) > 2
     - RETURN clauses: RETURN size(r) AS pathLength
+    - With strings: WHERE size(n.name) > 5
+    - With literal strings: RETURN size("hello") AS len
 
     Neo4j semantics:
-    - Null list → None
+    - Null value → None
     - Empty list [] → 0
+    - Empty string "" → 0
+    - String → number of characters
+    - List → number of elements
     """
     def __init__(self, list_expr):
-        self._list_expr = list_expr  # String expr or ListExpression
+        self._list_expr = list_expr  # String expr, LiteralValue, or ListExpression
 
     def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
                  scope: Optional[dict] = None):
-        # Evaluate list expression
+        # Case 1: Literal value (e.g., size("hello"))
+        if isinstance(self._list_expr, LiteralValue):
+            # It's a literal string from the query
+            return len(self._list_expr.value)
+
+        # Case 2: Entity reference (e.g., size(n.name) or size(n))
         if isinstance(self._list_expr, str):
+            getter = EntityAttributeGetter(self._list_expr)
+            value = getter.evaluate(match, host, return_edges, scope)
+
+            # Handle null
+            if value is None:
+                return None
+
+            # If it's a string, return character count
+            if isinstance(value, str):
+                return len(value)
+
+            # For non-strings, use ScopedListExpression to handle lists/dicts/scalars
             list_obj = ScopedListExpression(self._list_expr)
+            elements = list_obj.evaluate(match, host, return_edges, scope)
+            return len(elements)
+
+        # Case 3: ListExpression objects (like RelationshipsFunction)
         else:
-            list_obj = self._list_expr
+            elements = self._list_expr.evaluate(match, host, return_edges, scope)
 
-        elements = list_obj.evaluate(match, host, return_edges, scope)
+            # Handle null
+            if elements is None:
+                return None
 
-        # Handle null
-        if elements is None:
-            return None
-
-        # Return length
-        return len(elements)
+            # Return length
+            return len(elements)
 
     def __str__(self) -> str:
         """Return string representation for result keys."""
@@ -2876,15 +2914,32 @@ class GrandCypherTransformer(Transformer):
 
         return SINGLE(name=loop_variable, list_expr=list_expression, pred=inner_condition)
 
+    def size_literal(self, items):
+        """Wrap ESTRING literals in LiteralValue to distinguish from entity references."""
+        # items[0] is the evaluated ESTRING (a Python string)
+        return LiteralValue(items[0])
+
+    def size_arg(self, items):
+        """
+        Transform size_arg: just pass through the child value.
+
+        items[0] can be:
+        - list_expression result (string entity_id like "n" or "n.name")
+        - LiteralValue (wrapped string literal like LiteralValue("hello"))
+        """
+        return items[0]
+
     def size_function(self, items):
         """
-        Parse: size(r) or size(relationships(r))
+        Parse: size(r) or size(relationships(r)) or size("hello")
 
-        items: [list_expression]
+        items: [size_arg] where size_arg can be:
+        - string (entity reference from list_expression)
+        - LiteralValue (literal string)
         """
-        list_expression = items[0]
-
-        return SIZE(list_expr=list_expression)
+        arg = items[0]
+        # Pass the arg as-is, SIZE will handle both LiteralValue and string
+        return SIZE(list_expr=arg)
 
     def relationships_function(self, items):
         """Parse: relationships(path_variable)"""
