@@ -49,8 +49,9 @@ compound_condition  : condition
                     | "(" compound_condition boolean_arithmetic compound_condition ")"
                     | compound_condition boolean_arithmetic compound_condition
 
-condition           : (entity_id | scalar_function) op entity_id_or_value
-                    | (entity_id | scalar_function) op_list value_list
+condition           : (entity_id | scalar_function | list_predicate_function) op entity_id_or_value
+                    | (entity_id | scalar_function | list_predicate_function) op_list value_list
+                    | list_predicate_function
                     | sub_query
                     | "not"i condition -> condition_not
 
@@ -87,11 +88,39 @@ return_clause       : "return"i distinct_return? return_item ("," return_item)*
 return_item         : (entity_id | aggregation_function | scalar_function | entity_id "." attribute_id) ( "AS"i alias )?
 alias               : CNAME
 
-aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
-AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
+aggregation_function : AGGREGATE_FUNC "(" agg_argument ")"
+agg_argument        : scalar_function
+                    | entity_id ( "." attribute_id )?
+AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN" | "COLLECT"
 attribute_id         : CNAME
 
 scalar_function      : "id"i "(" entity_id ")" -> id_function
+                     | "size"i "(" size_arg ")" -> size_function
+                     | "tolower"i "(" scalar_func_arg ")" -> tolower_function
+                     | "toupper"i "(" scalar_func_arg ")" -> toupper_function
+                     | "trim"i "(" scalar_func_arg ")" -> trim_function
+                     | "type"i "(" entity_id ")" -> type_function
+                     | "coalesce"i "(" coalesce_args ")" -> coalesce_function
+
+scalar_func_arg      : scalar_function
+                     | entity_id ("." attribute_id)?
+
+size_arg             : list_expression
+                     | size_literal
+
+size_literal         : ESTRING
+
+coalesce_args        : coalesce_arg ("," coalesce_arg)*
+coalesce_arg         : value
+                     | entity_id ("." attribute_id)?
+
+list_predicate_function : "all"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> all_function
+                        | "any"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> any_function
+                        | "none"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> none_function
+                        | "single"i "(" CNAME "in"i list_expression "where"i compound_condition ")"  -> single_function
+
+list_expression      : "relationships"i "(" entity_id ")"  -> relationships_function
+                     | entity_id  -> entity_list
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -578,6 +607,338 @@ CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 class Condition:
     ...
 
+
+class ScalarFunction(Condition):
+    """
+    Base class for scalar functions that return a single value per row.
+
+    Characteristics:
+    - Return single value (not aggregate)
+    - Can be used in WHERE clauses (comparison)
+    - Can be used in RETURN clauses (output)
+    - Evaluated once per match
+
+    Examples: ID(), SIZE(), type(), timestamp()
+    """
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        """Evaluate scalar function for a single match."""
+        raise NotImplementedError
+
+    def __str__(self) -> str:
+        """Return string representation for result keys."""
+        raise NotImplementedError
+
+
+class EntityAttributeGetter:
+    """
+    Wrapper to distinguish entity references from literal values.
+
+    This class is used to represent references to graph entities and their attributes
+    (e.g., n.name, n) in expressions, allowing the runtime to distinguish them from
+    literal string values (e.g., "Unknown").
+
+    Examples:
+        EntityAttributeGetter("n.name") represents n.name
+        EntityAttributeGetter("n") represents n
+    """
+
+    def __init__(self, expression: str):
+        """
+        Initialize entity attribute getter from expression string.
+
+        Args:
+            expression: The entity reference (e.g., "n", "n.name", "r.weight")
+        """
+        # Parse expression: "n.name" -> entity="n", attribute="name"
+        if "." in expression:
+            self.entity, self.attribute = expression.split(".", 1)
+        else:
+            self.entity = expression
+            self.attribute = None
+
+    def evaluate(self, match: Match, host: nx.DiGraph,
+                 return_edges: dict = None, scope: dict = None):
+        """
+        Evaluate this entity reference against a match.
+
+        Priority order for resolution:
+        1. Scope variables (highest priority - for list predicates)
+        2. Node mappings (standard case)
+        3. Edge mappings (for edge references)
+        4. None (not found)
+
+        Args:
+            match: The current match containing node mappings
+            host: The graph to query
+            return_edges: Optional edge mappings for edge references
+            scope: Optional scope dictionary for list predicate variables
+
+        Returns:
+            The attribute value if found, None otherwise
+        """
+        # 1. Check scope first (highest priority for list predicates)
+        if scope and self.entity in scope:
+            element = scope[self.entity]
+            if self.attribute:
+                # Scope variable with attribute access: e.related
+                return element.get(self.attribute) if isinstance(element, dict) else None
+            # Simple scope variable: e
+            return element
+
+        # 2. Check node mappings (standard case)
+        if self.entity in match.node_mappings:
+            node_id = match.node_mappings[self.entity]
+            if self.attribute:
+                # Node with attribute: n.name
+                return host.nodes[node_id].get(self.attribute)
+            # Simple node reference: n - return full node dictionary
+            return dict(host.nodes[node_id])
+
+        # 3. Check edge mappings (for edge references)
+        if return_edges and self.entity in return_edges:
+            edge_mapping = return_edges[self.entity]
+            host_edges = match.mth.edge(*edge_mapping).edges
+            return get_edge_from_host(host, host_edges, self.attribute)
+
+        return None
+
+    def __str__(self) -> str:
+        """String representation for debugging."""
+        if self.attribute:
+            return f"{self.entity}.{self.attribute}"
+        return self.entity
+
+    def __repr__(self) -> str:
+        """Detailed representation for debugging."""
+        if self.attribute:
+            return f"EntityAttributeGetter({self.entity!r}.{self.attribute!r})"
+        return f"EntityAttributeGetter({self.entity!r})"
+
+
+class LiteralValue:
+    """Wrapper to mark a value as a literal from the query (not an entity reference)."""
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return f"LiteralValue({self.value!r})"
+
+
+class ID(ScalarFunction):
+    """
+    Implements id() scalar function.
+    Returns the node ID from the host graph.
+
+    Usage:
+    - WHERE: WHERE ID(n) = 1
+    - RETURN: RETURN ID(n) AS nodeId
+    """
+
+    def __init__(self, entity_name: str):
+        self._entity_name = entity_name
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        """Return the node ID from the match."""
+        if self._entity_name in match.node_mappings:
+            return match.node_mappings[self._entity_name]
+        else:
+            raise IndexError(f"Entity {self._entity_name} not in match.")
+
+    def __str__(self) -> str:
+        return f"ID({self._entity_name})"
+
+
+class AggregationFunction(Condition):
+    """
+    Base class for aggregation functions that compute over multiple matches.
+
+    Unlike ScalarFunction (per-match evaluation), AggregationFunction requires
+    the full result set to compute values.
+
+    Characteristics:
+    - Requires multiple matches to evaluate
+    - Needs grouping context
+    - Used in RETURN and ORDER BY clauses
+    - Architecture supports future WITH statements
+
+    Examples: COUNT, SUM, AVG, MAX, MIN
+    """
+
+    def __init__(self, entity, entity_attribute: Optional[str] = None):
+        """
+        Initialize aggregation function.
+
+        Args:
+            entity: Entity name (e.g., 'r' in COUNT(r)) OR ScalarFunction (e.g., size(r) in AVG(size(r)))
+            entity_attribute: Optional attribute (e.g., 'value' in SUM(r.value))
+        """
+        self._entity = entity
+        self._entity_attribute = entity_attribute
+        self._is_scalar_function = isinstance(entity, ScalarFunction)
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, Any]:
+        """
+        Evaluate aggregation over all matches with grouping.
+
+        Args:
+            matches: All matches to aggregate over
+            host: Target graph
+            return_edges: Edge mappings
+            group_keys: Entity names to group by (e.g., ["n.name"])
+            scope: Pre-computed values from outer context (e.g., from _lookup)
+
+        Returns:
+            Dict mapping group_tuple -> aggregated_value
+        """
+        raise NotImplementedError(f"{self.__class__.__name__}.evaluate() must be implemented")
+
+    def __str__(self) -> str:
+        """String representation for result keys: COUNT(r) or SUM(r.value) or AVG(size(r))"""
+        if self._is_scalar_function:
+            # Scalar function: use its string representation
+            entity_str = str(self._entity)
+        else:
+            # Regular entity reference
+            entity_str = self._entity
+            if self._entity_attribute:
+                entity_str += f".{self._entity_attribute}"
+        return f"{self.__class__.__name__}({entity_str})"
+
+    def _group_matches(self, scope: dict, group_keys: List[str],
+                      matches: List[Match] = None, host: nx.DiGraph = None,
+                      return_edges: dict = None) -> Dict[tuple, List[Any]]:
+        """
+        Group values and extract data for aggregation using scope.
+
+        Uses pre-computed values from scope when available (RETURN case),
+        OR evaluates scalar functions per-match if entity is a ScalarFunction.
+
+        Args:
+            scope: Pre-computed values from outer context (e.g., {"n.name": [...], "r.value": [...]})
+            group_keys: Keys to group by (e.g., ["n.name"])
+            matches: List of matches (needed for scalar function evaluation)
+            host: Target graph (needed for scalar function evaluation)
+            return_edges: Edge mappings (needed for scalar function evaluation)
+
+        Returns:
+            Dict mapping group_tuple -> list of values to aggregate
+        """
+        # If entity is a scalar function, evaluate it for each match
+        if self._is_scalar_function:
+            entity_values = []
+            for match in matches:
+                value = self._entity(match, host, return_edges, scope=None)
+                entity_values.append(value)
+        else:
+            # Build entity path: "r" or "r.value"
+            entity_path = self._entity + ('.' + self._entity_attribute if self._entity_attribute else '')
+
+            # Get entity values from scope (already extracted by _lookup)
+            entity_values = scope.get(entity_path, [])
+
+        # Group by group_keys (adapted from old aggregate() method)
+        grouped_data = {}
+        for i in range(len(entity_values)):
+            # Build group tuple from scope values
+            group_tuple = tuple(scope.get(key, [])[i] if i < len(scope.get(key, [])) else None
+                              for key in group_keys)
+
+            if group_tuple not in grouped_data:
+                grouped_data[group_tuple] = []
+            grouped_data[group_tuple].append(entity_values[i])
+
+        return grouped_data
+
+
+class COUNT(AggregationFunction):
+    """
+    COUNT aggregation function.
+    Returns the number of non-null values.
+    """
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, int]:
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
+        # COUNT only counts non-null values (filter out None)
+        return {group: sum(1 for v in values if v is not None) for group, values in grouped.items()}
+
+
+class SUM(AggregationFunction):
+    """
+    SUM aggregation function.
+    Returns the sum of numeric values (None treated as 0).
+    """
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, float]:
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
+        # SUM treats None as 0
+        return {group: sum(v or 0 for v in values)
+                for group, values in grouped.items()}
+
+
+class AVG(AggregationFunction):
+    """
+    AVG aggregation function.
+    Returns the average of numeric values (None treated as 0).
+    """
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, float]:
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
+        # AVG treats None as 0
+        result = {}
+        for group, values in grouped.items():
+            collated = [v or 0 for v in values]
+            result[group] = sum(collated) / len(collated) if collated else 0
+        return result
+
+
+class MAX(AggregationFunction):
+    """
+    MAX aggregation function.
+    Returns the maximum value (None treated as negative infinity).
+    """
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, Any]:
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
+        # MAX treats None as -infinity
+        return {group: max((d if d is not None else -float("inf")) for d in values)
+                for group, values in grouped.items()}
+
+
+class MIN(AggregationFunction):
+    """
+    MIN aggregation function.
+    Returns the minimum value (None treated as positive infinity).
+    """
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, Any]:
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
+        # MIN treats None as +infinity
+        return {group: min((d if d is not None else float("inf")) for d in values)
+                for group, values in grouped.items()}
+
+
+class COLLECT(AggregationFunction):
+    """
+    COLLECT aggregation function.
+    Collects all values into a list (like SQL's array_agg).
+    """
+
+    def evaluate(self, matches: List[Match], host: nx.DiGraph,
+                 return_edges: dict, group_keys: List[str], scope: dict) -> Dict[tuple, list]:
+        grouped = self._group_matches(scope, group_keys, matches, host, return_edges)
+        # Collect all values (including None) into lists
+        return {group: list(values) for group, values in grouped.items()}
+
+
 class BoolCondition(Condition):
     ...
 
@@ -588,9 +949,9 @@ class AND(BoolCondition):
         self._condition_b = condition_b
         self._operator = "and"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = self._condition_a(match, host, return_edges)
-        condition_b, where_b = self._condition_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
+        condition_a, where_a = self._condition_a(match, host, return_edges, scope)
+        condition_b, where_b = self._condition_b(match, host, return_edges, scope)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
@@ -601,9 +962,9 @@ class OR(BoolCondition):
         self._condition_b = condition_b
         self._operator = "or"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> tuple[bool, dict]:
-        condition_a, where_a = self._condition_a(match, host, return_edges)
-        condition_b, where_b = self._condition_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, scope: dict = None) -> tuple[bool, dict]:
+        condition_a, where_a = self._condition_a(match, host, return_edges, scope)
+        condition_b, where_b = self._condition_b(match, host, return_edges, scope)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
@@ -626,55 +987,562 @@ class LambdaCompareCondition(CompareCondition):
 
 class CompoundCondition(Condition):
     """compound condition"""
-    def __init__(self, should_be: bool, entity_id: str, operator, value):
+    def __init__(self, should_be: bool, entity_id, operator, value):
+        """
+        Initialize CompoundCondition.
+
+        Args:
+            should_be: Boolean expectation for the condition
+            entity_id: Either a ScalarFunction or string entity reference (e.g., "n.name")
+            operator: Comparison operator
+            value: Value to compare against
+        """
         self._should_be = should_be
-        self._entity_id = entity_id
         self._operator = operator
         self._value = value
 
-    def __str__(self):
-        return f"compound of {self._operator} for key {self._entity_id}: value {self._value}"
-
-    # def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, edge_hop_map = None, edge_hop_key = None) -> bool:
-    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list) -> bool:
-        # Check if this is an ID function call
-        if self._entity_id.startswith("ID(") and self._entity_id.endswith(")"):
-            # Extract the entity name from ID(entity_name)
-            actual_entity_name = self._entity_id[3:-1]  # Remove "ID(" and ")"
-            if actual_entity_name in match.node_mappings:
-                # Return the node ID directly
-                node_id = match.node_mappings[actual_entity_name]
-                try:
-                    val = self._operator(node_id, self._value)
-                except:
-                    val = False
-                operator_results = [val]
-            else:
-                raise IndexError(f"Entity {actual_entity_name} not in match.")
+        # Wrap entity references in EntityAttributeGetter at init time
+        if isinstance(entity_id, ScalarFunction):
+            self._entity_id = entity_id
         else:
-            host_entity_id = self._entity_id.split(".")
-            if isinstance(self._operator, SUBOP):
-                # SUBOP operator doesn't need a entity id.
-                val = self._operator(match.node_mappings, self._value)
-            elif host_entity_id[0] in match.node_mappings:
-                # Regular entity attribute access
-                host_entity_id[0] = match.node_mappings[host_entity_id[0]]
-                val = self._operator(get_node_from_host(host, host_entity_id[0], host_entity_id[1]), self._value)
-            elif host_entity_id[0] in return_edges:
-                # looking for edge...
-                entity_name, entity_attribute = _data_path_to_entity_name_attribute(self._entity_id)
-                edge_mapping = return_edges[entity_name]
+            # Store both the original string and the getter
+            self._entity_id_str = entity_id
+            self._entity_id = EntityAttributeGetter(entity_id)
 
-                host_edges = match.mth.edge(*edge_mapping).edges
-                val = self._operator(get_edge_from_host(host, host_edges, entity_attribute), self._value)
-            else:
-                raise IndexError(f"Entity {host_entity_id} not in graph.")
+    def __str__(self):
+        entity_repr = self._entity_id_str if hasattr(self, '_entity_id_str') else str(self._entity_id)
+        return f"compound of {self._operator} for key {entity_repr}: value {self._value}"
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
+        # Handle scalar functions (ID, SIZE, etc.)
+        if isinstance(self._entity_id, ScalarFunction):
+            # Evaluate scalar function to get value
+            scalar_value = self._entity_id(match, host, return_edges, scope)
+
+            # Apply comparison operator
+            val = self._operator(scalar_value, self._value)
+            operator_results = [val]
+
+            if val is None:
+                val = False
+            if val != self._should_be:
+                return False, operator_results
+            return True, operator_results
+
+        # Handle SUBOP operators (special case - don't need entity resolution)
+        if isinstance(self._operator, SUBOP):
+            val = self._operator(match.node_mappings, self._value)
+            operator_results = [val]
+            if val is None:
+                val = False
+            if val != self._should_be:
+                return False, operator_results
+            return True, operator_results
+
+        # Use EntityAttributeGetter for all entity references (handles scope, nodes, edges)
+        entity_value = self._entity_id.evaluate(match, host, return_edges, scope)
+
+        # Apply comparison operator
+        val = self._operator(entity_value, self._value)
         operator_results = [val]
+
         if val is None:
-            val is False
+            val = False
         if val != self._should_be:
             return False, operator_results
         return True, operator_results
+
+
+# ==================== List Expression Classes for all()/any() ====================
+
+class ListExpression:
+    """Base class for list expressions that can reference scope."""
+
+    def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None) -> list:
+        """Evaluate to get list, possibly using scope variables."""
+        raise NotImplementedError
+
+
+class ScopedListExpression(ListExpression):
+    """
+    List expression that can reference scope variables.
+
+    Examples:
+    - 'r' → get edge list from return_edges
+    - 'e.related' → get 'related' attr from scope variable 'e'
+    """
+    def __init__(self, expr: str):
+        """
+        Initialize ScopedListExpression.
+
+        Args:
+            expr: Expression string (e.g., "r", "e.related")
+        """
+        self._expr = expr
+        # Wrap expression in EntityAttributeGetter at init time
+        self._getter = EntityAttributeGetter(expr)
+
+    def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None):
+        # Use EntityAttributeGetter to resolve the value
+        value = self._getter.evaluate(match, host, return_edges, scope)
+
+        # Normalize to list
+        if value is None:
+            return []
+        elif isinstance(value, list):
+            return value
+        elif isinstance(value, dict):
+            return [value]
+        else:
+            # Scalar value - wrap in list
+            return [value]
+
+
+class RelationshipsFunction(ListExpression):
+    """Implements relationships() function."""
+    def __init__(self, path_variable: str):
+        self._path_variable = path_variable
+
+    def evaluate(self, match: Match, host: nx.DiGraph, return_edges: list, scope: Optional[dict] = None):
+        # Use ScopedListExpression to handle scope references
+        return ScopedListExpression(self._path_variable).evaluate(match, host, return_edges, scope)
+
+
+# ==================== ALL and ANY Condition Classes ====================
+
+class ALL(Condition):
+    """
+    Implements all() predicate function.
+
+    REUSES existing Condition classes (CompoundCondition, AND, OR)!
+    """
+    def __init__(self, name: str, list_expr: str, pred):
+        self._name = name           # Loop variable name
+        self._list_expr = list_expr  # String expr or ListExpression object
+        self._pred = pred           # Regular Condition (CompoundCondition, AND, OR, etc.)
+
+    def __call__(self, match, host: nx.DiGraph, return_edges: list,
+                 scope: dict = None) -> tuple[bool, list]:
+        # 1. Evaluate list expression (may reference scope)
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # 2. Handle empty/null lists (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return True, [True]  # Vacuously true
+
+        # 3. Iterate and evaluate predicate for each element
+        for element in elements:
+            # Create new scope with current element
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope (pred is a regular Condition!)
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            # Short-circuit on False
+            if result is False:
+                return False, [False]
+            elif result is None:
+                # Track null for Neo4j semantics
+                pass
+
+        return True, [True]
+
+
+class ANY(Condition):
+    """Similar structure to ALL but returns True if any element satisfies."""
+    def __init__(self, name: str, list_expr: str, pred):
+        self._name = name
+        self._list_expr = list_expr
+        self._pred = pred  # Regular Condition!
+
+    def __call__(self, match, host, return_edges, scope=None):
+        # Evaluate list
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle empty/null (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return False, [False]  # False for empty list
+
+        # Iterate
+        for element in elements:
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            # Short-circuit on True
+            if result is True:
+                return True, [True]
+
+        return False, [False]
+
+
+class NONE(Condition):
+    """
+    Implements none() predicate function.
+    Returns true when NO elements satisfy the predicate.
+
+    Neo4j semantics:
+    - Empty list [] → True (no elements violate)
+    - Null list → None
+    - Short-circuits on first True (element satisfies)
+    """
+    def __init__(self, name: str, list_expr, pred: Condition):
+        self._name = name           # Loop variable name
+        self._list_expr = list_expr # String expr or ListExpression
+        self._pred = pred           # Regular Condition
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate list expression
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle empty/null (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return True, [True]  # Vacuously true (no elements violate)
+
+        # Iterate and check for violations
+        for element in elements:
+            # Create new scope with current element
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            # Short-circuit on True (found element that satisfies)
+            if result is True:
+                return False, [False]  # none() fails if any element satisfies
+
+        return True, [True]  # No elements satisfied the predicate
+
+
+class SINGLE(Condition):
+    """
+    Implements single() predicate function.
+    Returns true when EXACTLY ONE element satisfies the predicate.
+
+    Neo4j semantics:
+    - Empty list [] → False (not exactly one)
+    - Null list → None
+    - Cannot short-circuit (must check all elements to count)
+    """
+    def __init__(self, name: str, list_expr, pred: Condition):
+        self._name = name           # Loop variable name
+        self._list_expr = list_expr # String expr or ListExpression
+        self._pred = pred           # Regular Condition
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate list expression
+        if isinstance(self._list_expr, str):
+            list_obj = ScopedListExpression(self._list_expr)
+        else:
+            list_obj = self._list_expr
+
+        elements = list_obj.evaluate(match, host, return_edges, scope)
+
+        # Handle empty/null (Neo4j semantics)
+        if elements is None:
+            return None, [None]
+        if not elements:
+            return False, [False]  # Empty doesn't have exactly one
+
+        # Count satisfying elements
+        count = 0
+        has_null = False
+
+        for element in elements:
+            # Create new scope with current element
+            new_scope = {**scope} if scope else {}
+            new_scope[self._name] = element
+
+            # Evaluate predicate with scope
+            result, _ = self._pred(match, host, return_edges, new_scope)
+
+            if result is True:
+                count += 1
+                # Early exit if count > 1
+                if count > 1:
+                    return False, [False]
+            elif result is None:
+                has_null = True
+
+        # Return based on count
+        if count == 1:
+            return True, [True]
+        elif count == 0 and has_null:
+            return None, [None]  # Uncertain due to nulls
+        else:
+            return False, [False]
+
+
+class SIZE(ScalarFunction):
+    """
+    Implements size() scalar function.
+    Returns the length of a list or string as an integer.
+
+    Can be used in:
+    - WHERE clauses: WHERE size(r) > 2
+    - RETURN clauses: RETURN size(r) AS pathLength
+    - With strings: WHERE size(n.name) > 5
+    - With literal strings: RETURN size("hello") AS len
+
+    Neo4j semantics:
+    - Null value → None
+    - Empty list [] → 0
+    - Empty string "" → 0
+    - String → number of characters
+    - List → number of elements
+    """
+    def __init__(self, list_expr):
+        self._list_expr = list_expr  # String expr, LiteralValue, or ListExpression
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Case 1: Literal value (e.g., size("hello"))
+        if isinstance(self._list_expr, LiteralValue):
+            # It's a literal string from the query
+            return len(self._list_expr.value)
+
+        # Case 2: Entity reference (e.g., size(n.name) or size(n))
+        if isinstance(self._list_expr, str):
+            getter = EntityAttributeGetter(self._list_expr)
+            value = getter.evaluate(match, host, return_edges, scope)
+
+            # Handle null
+            if value is None:
+                return None
+
+            # If it's a string, return character count
+            if isinstance(value, str):
+                return len(value)
+
+            # For non-strings, use ScopedListExpression to handle lists/dicts/scalars
+            list_obj = ScopedListExpression(self._list_expr)
+            elements = list_obj.evaluate(match, host, return_edges, scope)
+            return len(elements)
+
+        # Case 3: ListExpression objects (like RelationshipsFunction)
+        else:
+            elements = self._list_expr.evaluate(match, host, return_edges, scope)
+
+            # Handle null
+            if elements is None:
+                return None
+
+            # Return length
+            return len(elements)
+
+    def __str__(self) -> str:
+        """Return string representation for result keys."""
+        expr_str = self._list_expr if isinstance(self._list_expr, str) else "..."
+        return f"size({expr_str})"
+
+
+class ToLower(ScalarFunction):
+    """
+    Implements toLower() scalar function.
+    Converts a string to lowercase.
+    """
+
+    def __init__(self, expression):
+        """
+        Initialize toLower with an expression.
+
+        Args:
+            expression: Either a ScalarFunction or string entity reference (e.g., "n.name")
+        """
+        if isinstance(expression, ScalarFunction):
+            self._expression = expression
+        else:
+            # Wrap entity reference in EntityAttributeGetter at init time
+            self._expression = EntityAttributeGetter(expression)
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate expression (either ScalarFunction or EntityAttributeGetter)
+        if isinstance(self._expression, ScalarFunction):
+            value = self._expression(match, host, return_edges, scope)
+        else:
+            # It's an EntityAttributeGetter
+            value = self._expression.evaluate(match, host, return_edges, scope)
+
+        return value.lower() if isinstance(value, str) else value
+
+    def __str__(self) -> str:
+        return f"toLower({self._expression})"
+
+
+class ToUpper(ScalarFunction):
+    """
+    Implements toUpper() scalar function.
+    Converts a string to uppercase.
+    """
+
+    def __init__(self, expression):
+        """
+        Initialize toUpper with an expression.
+
+        Args:
+            expression: Either a ScalarFunction or string entity reference (e.g., "n.name")
+        """
+        if isinstance(expression, ScalarFunction):
+            self._expression = expression
+        else:
+            # Wrap entity reference in EntityAttributeGetter at init time
+            self._expression = EntityAttributeGetter(expression)
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate expression (either ScalarFunction or EntityAttributeGetter)
+        if isinstance(self._expression, ScalarFunction):
+            value = self._expression(match, host, return_edges, scope)
+        else:
+            # It's an EntityAttributeGetter
+            value = self._expression.evaluate(match, host, return_edges, scope)
+
+        return value.upper() if isinstance(value, str) else value
+
+    def __str__(self) -> str:
+        return f"toUpper({self._expression})"
+
+
+class Trim(ScalarFunction):
+    """
+    Implements trim() scalar function.
+    Trims whitespace from a string.
+    """
+
+    def __init__(self, expression):
+        """
+        Initialize trim with an expression.
+
+        Args:
+            expression: Either a ScalarFunction or string entity reference (e.g., "n.name")
+        """
+        if isinstance(expression, ScalarFunction):
+            self._expression = expression
+        else:
+            # Wrap entity reference in EntityAttributeGetter at init time
+            self._expression = EntityAttributeGetter(expression)
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate expression (either ScalarFunction or EntityAttributeGetter)
+        if isinstance(self._expression, ScalarFunction):
+            value = self._expression(match, host, return_edges, scope)
+        else:
+            # It's an EntityAttributeGetter
+            value = self._expression.evaluate(match, host, return_edges, scope)
+
+        return value.strip() if isinstance(value, str) else value
+
+    def __str__(self) -> str:
+        return f"trim({self._expression})"
+
+
+class Type(ScalarFunction):
+    """
+    Implements type() scalar function.
+    Returns the type/label of a relationship.
+    """
+
+    def __init__(self, expression: str):
+        self._expression = expression  # e.g., "r"
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Type works on relationships only
+        # Use return_edges to find the edge
+        if self._expression in return_edges:
+            edge_mapping = return_edges[self._expression]
+            host_edges = match.mth.edge(*edge_mapping).edges
+            edge_data = get_edge_from_host(host, host_edges, None)
+
+            # edge_data might be a dict or list
+            if isinstance(edge_data, dict):
+                # Single edge
+                labels = edge_data.get('__labels__', set())
+                if labels:
+                    return list(labels)[0] if isinstance(labels, set) else labels
+            elif isinstance(edge_data, list) and len(edge_data) > 0:
+                # Multiple edges - return first label
+                labels = edge_data[0].get('__labels__', set())
+                if labels:
+                    return list(labels)[0] if isinstance(labels, set) else labels
+
+        return None
+
+    def __str__(self) -> str:
+        return f"type({self._expression})"
+
+
+class Coalesce(ScalarFunction):
+    """
+    Implements coalesce() scalar function.
+    Returns the first non-null value from the argument list.
+    """
+
+    def __init__(self, expressions: list):
+        self._expressions = expressions  # List of expressions
+
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list,
+                 scope: Optional[dict] = None):
+        # Evaluate each expression and return first non-null
+        for expr in self._expressions:
+            # Check if it's an EntityAttributeGetter (entity reference)
+            if isinstance(expr, EntityAttributeGetter):
+                # It's an entity reference like n.name or n
+                value = expr.evaluate(match, host)
+                if value is not None:
+                    return value
+            else:
+                # It's a literal value (string, number, bool, None, etc.)
+                if expr is not None:
+                    return expr
+        return None
+
+    def __str__(self) -> str:
+        # Format expressions for display
+        expr_strs = []
+        for expr in self._expressions:
+            if isinstance(expr, EntityAttributeGetter):
+                # Entity reference: n.name or n
+                expr_strs.append(str(expr))
+            elif isinstance(expr, str):
+                # String literal: show with quotes
+                expr_strs.append(f'"{expr}"')
+            else:
+                # Other literals: numbers, booleans, None
+                expr_strs.append(repr(expr))
+        return f"coalesce({', '.join(expr_strs)})"
+
+
+# ==================== End of List Predicate Classes ====================
 
 
 def none_wrapper(func) -> Callable[[Any, Any], Union[bool, None]]:
@@ -710,15 +1578,21 @@ _BOOL_ARI = {
 
 
 def _data_path_to_entity_name_attribute(data_path):
+    """
+    Parse data path into entity name and attribute using EntityAttributeGetter.
+
+    Args:
+        data_path: String path (e.g., "n.name", "n") or Token containing the path
+
+    Returns:
+        tuple: (entity_name, entity_attribute)
+    """
     if isinstance(data_path, Token):
         data_path = data_path.value
-    if "." in data_path:
-        entity_name, entity_attribute = data_path.split(".")
-    else:
-        entity_name = data_path
-        entity_attribute = None
 
-    return entity_name, entity_attribute
+    # Use EntityAttributeGetter to parse the path
+    getter = EntityAttributeGetter(data_path)
+    return getter.entity, getter.attribute
 
 
 # this is to convert WHERE OPERATOR to INDEXER OPERATOR
@@ -761,8 +1635,19 @@ def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_
                                 should_be=condition._should_be)
     if (isinstance(condition, LambdaCompareCondition) and
         condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
-        if entity_id.startswith("ID()"):
-            entity_id = entity_id[3:-1]
+        # Handle scalar functions
+        if isinstance(entity_id, ID):
+            # ID() can be optimized - extract entity name
+            entity_id = entity_id._entity_name
+        elif isinstance(entity_id, EntityAttributeGetter):
+            # EntityAttributeGetter can be optimized - extract full expression
+            if entity_id.attribute:
+                entity_id = f"{entity_id.entity}.{entity_id.attribute}"
+            else:
+                entity_id = entity_id.entity
+        elif not isinstance(entity_id, str):
+            # Other scalar functions can't be optimized by indexer
+            return IndexerUnsupportedOp(condition, entity_id, value)
         operator = condition._operator
         if should_be is True:
             operator = WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
@@ -864,25 +1749,32 @@ class GrandCypherExecutor:
         result = {}
         processed_paths = set()  # Keep track of processed paths
 
-        # handling RETURN ID(A)
+        # Handle all scalar functions (ID, SIZE, future functions) - UNIFIED!
         for data_path in data_paths:
+            if isinstance(data_path, ScalarFunction):
+                # Evaluate scalar function for each match
+                ret = []
+                for match in true_matches:
+                    result_value = data_path(
+                        match,
+                        self._target_graph,
+                        self._return_edges,
+                        scope=None
+                    )
+                    ret.append(result_value)
+
+                # Use str(data_path) as key: "ID(A)", "size(r)", etc.
+                result[str(data_path)] = ret[offset_limit]
+                processed_paths.add(data_path)
+                processed_paths.add(str(data_path))
+                continue
+
+        # Validate entity names for non-scalar-function data paths
+        for data_path in data_paths:
+            if isinstance(data_path, ScalarFunction):
+                continue  # Skip scalar functions, already processed
+
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
-            # Special handling for ID function
-            if entity_name.upper().startswith("ID(") and entity_name.endswith(")"):
-                # Extract the original entity name
-                original_entity = entity_name[3:-1]
-                if original_entity in motif_nodes:
-                    # Return the node ID directly instead of the node attributes
-                    ret = [match.mth.node(original_entity) for match in true_matches]
-                    result[data_path] = ret[offset_limit]
-                    result[original_entity] = ret[
-                        offset_limit
-                    ]  # Also store under original entity name
-                    processed_paths.add(data_path)  # Mark as processed
-                    processed_paths.add(
-                        original_entity
-                    )  # Mark original also as processed
-                    continue
             if (
                 entity_name not in motif_nodes
                 and entity_name not in self._return_edges
@@ -900,22 +1792,14 @@ class GrandCypherExecutor:
 
             if entity_name in motif_nodes:
                 # We are looking for a node mapping in the target graph:
-
-                if entity_attribute:
-                    # Get the correct entity from the target host graph,
-                    # and then return the attribute:
-                    ret = (
-                        self._target_graph.nodes[match.mth.node(entity_name)].get(
-                            entity_attribute, None
-                        )
-                        for match in true_matches
-                    )
-                else:
-                    # Return the full node dictionary with all attributes
-                    ret = (
-                        self._target_graph.nodes[match.mth.node(entity_name)]
-                        for match in true_matches
-                    )
+                # Use EntityAttributeGetter for consistent entity access
+                # If entity_attribute exists: returns specific attribute value
+                # If entity_attribute is None: returns full node dictionary
+                getter = EntityAttributeGetter(data_path)
+                ret = (
+                    getter.evaluate(match, self._target_graph, self._return_edges)
+                    for match in true_matches
+                )
 
             elif entity_name in self._paths:
                 ret = []
@@ -938,18 +1822,13 @@ class GrandCypherExecutor:
                     ret.append(path)
 
             else:
-                edge_mapping = self._return_edges[entity_name]
                 # We are looking for an edge mapping in the target graph:
-                ret = []
-                for match in true_matches:
-                    host_edges = match.mth.edge(*edge_mapping).edges
-                    ret.append(
-                        get_edge_from_host(
-                            self._target_graph,
-                            host_edges,
-                            entity_attribute,
-                        )
-                    )
+                # Use EntityAttributeGetter for consistent entity access
+                getter = EntityAttributeGetter(data_path)
+                ret = (
+                    getter.evaluate(match, self._target_graph, self._return_edges)
+                    for match in true_matches
+                )
 
             result[data_path] = list(ret)[offset_limit]
         return result
@@ -1014,27 +1893,40 @@ class GrandCypherExecutor:
             offset_limit=slice(0, None),
         )
         if len(self._aggregate_functions) > 0:
+            # Determine group keys: exclude keys that end with aggregated entity path
+            # (matches old aggregate() logic)
             group_keys = [
                 key
                 for key in results.keys()
-                if not any(key.endswith(func[1]) for func in self._aggregate_functions)
+                if not any(
+                    not agg_func._is_scalar_function and key.endswith(
+                        agg_func._entity + ('.' + agg_func._entity_attribute if agg_func._entity_attribute else '')
+                    )
+                    for agg_func in self._aggregate_functions
+                )
             ]
 
             aggregated_results = {}
-            for func, entity in self._aggregate_functions:
-                aggregated_data = self.aggregate(func, results, entity, group_keys)
+            # Evaluate each aggregation function using scope-based architecture
+            for agg_func in self._aggregate_functions:
+                # Call evaluate() with scope (results dict from _lookup)
+                aggregated_data = agg_func.evaluate(
+                    self._get_true_matches(),
+                    self._target_graph,
+                    self._return_edges,
+                    group_keys,
+                    scope=results  # Pass results as scope
+                )
                 aggregated_values = list(aggregated_data.values())
                 aggregated_keys = list(aggregated_data.keys())
-                func_key = self._format_aggregation_key(func, entity)
+                # Use str(agg_func) for result key: "COUNT(r)", "SUM(r.value)", etc.
+                func_key = str(agg_func)
                 aggregated_results[func_key] = aggregated_values
                 self._return_requests.append(func_key)
-                # TODO: the group_keys is the same for all func
-                # let's have aggregated keys 1st
-                # then have aggregated values
-                # so we don't have to repeat the groups key population here
-                # for i in range(len(gro up_keys)):
-                #     results[group_keys[i]] = [k[i] for k in aggregated_keys]
+
+            # Merge aggregated results with regular results
             results.update(aggregated_results)
+            # Reconstruct grouped results
             for i in range(len(group_keys)):
                 results[group_keys[i]] = [k[i] for k in aggregated_keys]
 
@@ -1050,16 +1942,19 @@ class GrandCypherExecutor:
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
-        self._return_requests = list(map(str, self._return_requests))
+        # Convert all return_requests to strings (including scalar functions) for key matching
+        # Use a local variable to avoid modifying self._return_requests (breaks reusability)
+        return_requests_str = [str(item) for item in self._return_requests]
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
             self._entity2alias.get(key, key): values
             for key, values in results.items()
-            if key in self._return_requests
-            or self._alias2entity.get(key, key) in self._return_requests
+            if key in return_requests_str
+            or self._alias2entity.get(key, key) in return_requests_str
         }
 
+        # TODO: remove this hack
         # HACK: convert to [None] if edge is None
         for key, values in results.items():
             parsed_values = []
@@ -1478,36 +2373,85 @@ class GrandCypherTransformer(Transformer):
                 alias = self._extract_alias(item)
                 item = item.children[0] if isinstance(item, Tree) else item
                 if isinstance(item, Tree) and item.data == "aggregation_function":
-                    func, entity = self._parse_aggregation_token(item)
+                    # Parse to AggregationFunction object (not tuple)
+                    agg_func = self._parse_aggregation_token(item)
                     if alias:
-                        self._executors[-1]._entity2alias[
-                            self._executors[-1]._format_aggregation_key(func, entity)
-                        ] = alias
-                    self._executors[-1]._aggregation_attributes.add(entity)
-                    self._executors[-1]._aggregate_functions.append((func, entity))
+                        # Use str(agg_func) for alias key: "COUNT(r)", "SUM(r.value)", etc.
+                        self._executors[-1]._entity2alias[str(agg_func)] = alias
+                    # Add full entity path to aggregation_attributes for _lookup (only for entity references)
+                    if not agg_func._is_scalar_function:
+                        entity_path = agg_func._entity + ('.' + agg_func._entity_attribute if agg_func._entity_attribute else '')
+                        self._executors[-1]._aggregation_attributes.add(entity_path)
+                    # Store AggregationFunction object, not tuple
+                    self._executors[-1]._aggregate_functions.append(agg_func)
                 else:
-                    if not isinstance(item, str):
+                    # Handle scalar functions (ID, SIZE, etc.) - keep object for evaluation
+                    if isinstance(item, ScalarFunction):
+                        # Keep scalar function object
+                        self._executors[-1]._original_return_requests.add(item)
+                        if alias:
+                            # Use str(item) for alias key: "ID(A)", "size(r)", etc.
+                            self._executors[-1]._entity2alias[str(item)] = alias
+                        self._executors[-1]._return_requests.append(item)
+                    elif not isinstance(item, str):
+                        # Convert non-string, non-scalar-function items to string
                         item = str(item.value)
-                    self._executors[-1]._original_return_requests.add(item)
-
-                    if alias:
-                        self._executors[-1]._entity2alias[item] = alias
-                    self._executors[-1]._return_requests.append(item)
+                        self._executors[-1]._original_return_requests.add(item)
+                        if alias:
+                            self._executors[-1]._entity2alias[item] = alias
+                        self._executors[-1]._return_requests.append(item)
+                    else:
+                        # Already a string, use as-is
+                        self._executors[-1]._original_return_requests.add(item)
+                        if alias:
+                            self._executors[-1]._entity2alias[item] = alias
+                        self._executors[-1]._return_requests.append(item)
 
         self._executors[-1]._alias2entity.update({v: k for k, v in self._executors[-1]._entity2alias.items()})
 
-    def _parse_aggregation_token(self, item: Tree):
+    def _parse_aggregation_token(self, item: Tree) -> AggregationFunction:
         """
-        Parse the aggregation function token and return the function and entity
-            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Token('CNAME', 'r'), Tree('attribute_id', [Token('CNAME', 'value')])])
-            output: ('SUM', 'r.value')
+        Parse the aggregation function token and return an AggregationFunction object.
+            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Tree('agg_argument', [...])])
+            output: SUM('r', 'value') object or SUM(scalar_function) object
         """
-        func = str(item.children[0].value)  # AGGREGATE_FUNC
-        entity = str(item.children[1].value)
-        if len(item.children) > 2:
-            entity += "." + str(item.children[2].children[0].value)
+        func_name = str(item.children[0].value).upper()  # COUNT, SUM, AVG, MAX, MIN
+        agg_arg = item.children[1]  # Tree('agg_argument', [...])
 
-        return func, entity
+        # Check if argument is a scalar function or entity reference
+        if isinstance(agg_arg, Tree) and agg_arg.data == "agg_argument":
+            arg_child = agg_arg.children[0]
+
+            # Case 1: Scalar function argument (e.g., size(relationships(r)))
+            if isinstance(arg_child, ScalarFunction):
+                # Scalar function was already parsed by transformer
+                entity = arg_child
+                entity_attribute = None
+
+            # Case 2: Entity reference (e.g., r.value or r)
+            else:
+                entity = str(arg_child.value) if hasattr(arg_child, 'value') else str(arg_child)
+                entity_attribute = None
+
+                # Check for attribute (e.g., r.value)
+                if len(agg_arg.children) > 1 and isinstance(agg_arg.children[1], Tree):
+                    entity_attribute = str(agg_arg.children[1].children[0].value)
+        else:
+            # Fallback for old format (backward compatibility)
+            entity = str(agg_arg.value) if hasattr(agg_arg, 'value') else str(agg_arg)
+            entity_attribute = None
+
+        # Create appropriate AggregationFunction class instance
+        func_class = {
+            "COUNT": COUNT,
+            "SUM": SUM,
+            "AVG": AVG,
+            "MAX": MAX,
+            "MIN": MIN,
+            "COLLECT": COLLECT,
+        }[func_name]
+
+        return func_class(entity, entity_attribute)
 
     def _extract_alias(self, item: Tree):
         """
@@ -1540,9 +2484,13 @@ class GrandCypherTransformer(Transformer):
                 isinstance(item.children[0], Tree)
                 and item.children[0].data == "aggregation_function"
             ):
-                func, entity = self._parse_aggregation_token(item.children[0])
-                field = self._executors[-1]._format_aggregation_key(func, entity)
-                self._executors[-1]._order_by_attributes.add(entity)
+                # Parse to AggregationFunction object
+                agg_func = self._parse_aggregation_token(item.children[0])
+                # Use str(agg_func) for field name: "COUNT(r)", "SUM(r.value)", etc.
+                field = str(agg_func)
+                # Add full entity path to order_by_attributes for _lookup
+                entity_path = agg_func._entity + ('.' + agg_func._entity_attribute if agg_func._entity_attribute else '')
+                self._executors[-1]._order_by_attributes.add(entity_path)
             else:
                 field = str(
                     item.children[0]
@@ -1700,7 +2648,11 @@ class GrandCypherTransformer(Transformer):
 
     def compound_condition(self, val):
         if len(val) == 1:
-            val = CompoundCondition(*val[0])
+            item = val[0]
+            # Check if already a Condition object (ALL, ANY, or other)
+            if isinstance(item, Condition):
+                return item
+            val = CompoundCondition(*item)
         else:  # len == 3
             compound_a, operator, compound_b = val
             val = operator(compound_a, compound_b)
@@ -1713,8 +2665,12 @@ class GrandCypherTransformer(Transformer):
         return _BOOL_ARI["or"]
 
     def condition(self, condition):
-        if len(condition) == 1:  # sub query
-            condition = condition[0]
+        if len(condition) == 1:  # sub query or list predicate or scalar function
+            item = condition[0]
+            # Check if it's already a Condition object (ALL, ANY, NONE, SINGLE, ScalarFunction)
+            if isinstance(item, (ALL, ANY, NONE, SINGLE, ScalarFunction)):
+                return item
+            condition = item
 
         if len(condition) == 3:
             (entity_id, operator, value) = condition
@@ -1731,11 +2687,269 @@ class GrandCypherTransformer(Transformer):
 
     def id_function(self, entity_id):
         entity_name = entity_id[0].value
-        # Add the raw entity ID to the return requests as well
-        # This ensures tests like test_id can still access res["A"]
-        # self._return_requests.append(entity_name)
-        # Return a special identifier that will be processed in _lookup method
-        return f"ID({entity_name})"
+        # Return ID object (class-based, not string-based)
+        return ID(entity_name)
+
+    def tolower_function(self, items):
+        """
+        Parse: toLower(n) or toLower(n.name) or toLower(trim(n.name))
+
+        items: [scalar_func_arg] which is a Tree containing either a ScalarFunction or entity_id
+        """
+        arg = items[0]
+
+        # arg is a Tree with 'scalar_func_arg'
+        if hasattr(arg, 'children') and len(arg.children) > 0:
+            first_child = arg.children[0]
+
+            # Check if the first child is a ScalarFunction (nested)
+            if isinstance(first_child, ScalarFunction):
+                return ToLower(first_child)
+
+            # Check if first child is a Token (entity name)
+            if hasattr(first_child, 'value'):
+                if len(arg.children) == 1:
+                    # Just entity: n
+                    expression = first_child.value
+                else:
+                    # Has attribute: n.name
+                    entity_name = first_child.value
+                    attribute_name = arg.children[1].children[0].value
+                    expression = f"{entity_name}.{attribute_name}"
+                return ToLower(expression)
+
+        # Fallback
+        return ToLower(str(arg))
+
+    def toupper_function(self, items):
+        """
+        Parse: toUpper(n) or toUpper(n.name) or toUpper(trim(n.name))
+
+        items: [scalar_func_arg] which is a Tree containing either a ScalarFunction or entity_id
+        """
+        arg = items[0]
+
+        # arg is a Tree with 'scalar_func_arg'
+        if hasattr(arg, 'children') and len(arg.children) > 0:
+            first_child = arg.children[0]
+
+            # Check if the first child is a ScalarFunction (nested)
+            if isinstance(first_child, ScalarFunction):
+                return ToUpper(first_child)
+
+            # Check if first child is a Token (entity name)
+            if hasattr(first_child, 'value'):
+                if len(arg.children) == 1:
+                    # Just entity: n
+                    expression = first_child.value
+                else:
+                    # Has attribute: n.name
+                    entity_name = first_child.value
+                    attribute_name = arg.children[1].children[0].value
+                    expression = f"{entity_name}.{attribute_name}"
+                return ToUpper(expression)
+
+        # Fallback
+        return ToUpper(str(arg))
+
+    def trim_function(self, items):
+        """
+        Parse: trim(n) or trim(n.name) or trim(toLower(n.name))
+
+        items: [scalar_func_arg] which is a Tree containing either a ScalarFunction or entity_id
+        """
+        arg = items[0]
+
+        # arg is a Tree with 'scalar_func_arg'
+        if hasattr(arg, 'children') and len(arg.children) > 0:
+            first_child = arg.children[0]
+
+            # Check if the first child is a ScalarFunction (nested)
+            if isinstance(first_child, ScalarFunction):
+                return Trim(first_child)
+
+            # Check if first child is a Token (entity name)
+            if hasattr(first_child, 'value'):
+                if len(arg.children) == 1:
+                    # Just entity: n
+                    expression = first_child.value
+                else:
+                    # Has attribute: n.name
+                    entity_name = first_child.value
+                    attribute_name = arg.children[1].children[0].value
+                    expression = f"{entity_name}.{attribute_name}"
+                return Trim(expression)
+
+        # Fallback
+        return Trim(str(arg))
+
+    def type_function(self, items):
+        """
+        Parse: type(r)
+
+        items: [entity_id]
+        """
+        entity_name = items[0].value
+        return Type(entity_name)
+
+    def coalesce_function(self, items):
+        """
+        Parse: coalesce(n.name, n.id, 'default')
+
+        items: [coalesce_args Tree]
+        """
+        # items[0] is the coalesce_args tree
+        args_tree = items[0]
+        expressions = []
+
+        # Process each coalesce_arg
+        for arg in args_tree.children:
+            # arg is a Tree with data='coalesce_arg'
+            if hasattr(arg, 'data') and arg.data == 'coalesce_arg':
+                # It's a Tree containing the argument
+                if len(arg.children) == 1:
+                    child = arg.children[0]
+                    # Check if it's a value or entity_id (both are Tokens or Trees)
+                    if hasattr(child, 'value'):
+                        # It's a Token - need to determine if it's a literal or entity reference
+                        if hasattr(child, 'type'):
+                            # Check token type to distinguish literals from entity references
+                            if child.type == 'ESTRING':
+                                # String literal - parse it (remove quotes and handle escapes)
+                                expressions.append(child.value.strip('"').encode().decode('unicode_escape'))
+                            elif child.type == 'NUMBER':
+                                # Number literal - parse it
+                                try:
+                                    # Try int first, then float
+                                    expressions.append(int(child.value))
+                                except ValueError:
+                                    expressions.append(float(child.value))
+                            elif child.type == 'CNAME':
+                                # Entity reference without attribute: n
+                                expressions.append(EntityAttributeGetter(child.value))
+                            else:
+                                # Other token types (shouldn't happen in coalesce)
+                                expressions.append(child.value)
+                        else:
+                            # No type attribute - fallback
+                            expressions.append(child.value)
+                    elif hasattr(child, 'data'):
+                        # It's a Tree (like entity_id or null/true/false)
+                        if child.data == 'entity_id':
+                            # Just entity name: n
+                            entity_name = child.children[0].value
+                            expressions.append(EntityAttributeGetter(entity_name))
+                        elif child.data == 'null':
+                            # NULL literal
+                            expressions.append(None)
+                        elif child.data == 'true':
+                            # TRUE literal
+                            expressions.append(True)
+                        elif child.data == 'false':
+                            # FALSE literal
+                            expressions.append(False)
+                        else:
+                            # Some other tree - shouldn't happen
+                            expressions.append(child)
+                    else:
+                        expressions.append(child)
+                elif len(arg.children) >= 2:
+                    # entity_id with attribute_id: n.name
+                    # arg.children[0] is Token CNAME for entity
+                    # arg.children[1] is Tree attribute_id
+                    entity_name = arg.children[0].value
+                    attribute_name = arg.children[1].children[0].value
+                    expressions.append(EntityAttributeGetter(f"{entity_name}.{attribute_name}"))
+            else:
+                # Direct value (shouldn't happen with current grammar)
+                expressions.append(arg)
+
+        return Coalesce(expressions)
+
+    def all_function(self, items):
+        """
+        Parse: all(edge IN r WHERE edge.weight > 5)
+
+        items structure:
+        [0]: CNAME (loop variable, e.g., "edge")
+        [1]: list_expression (string or ListExpression)
+        [2]: compound_condition (already transformed into CompoundCondition/AND/OR!)
+        """
+        loop_variable = items[0].value
+        list_expression = items[1]  # Already a string or ListExpression
+        inner_condition = items[2]  # Already a Condition - perfect!
+
+        # Just pass it through! No conversion needed.
+        return ALL(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def any_function(self, items):
+        """Similar to all_function - trivial!"""
+        loop_variable = items[0].value
+        list_expression = items[1]
+        inner_condition = items[2]  # Already a Condition
+
+        return ANY(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def none_function(self, items):
+        """
+        Parse: none(edge IN r WHERE edge.weight > 5)
+
+        items: [loop_var, list_expr, condition]
+        """
+        loop_variable = items[0].value
+        list_expression = items[1]
+        inner_condition = items[2]
+
+        return NONE(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def single_function(self, items):
+        """
+        Parse: single(edge IN r WHERE edge.weight > 5)
+
+        items: [loop_var, list_expr, condition]
+        """
+        loop_variable = items[0].value
+        list_expression = items[1]
+        inner_condition = items[2]
+
+        return SINGLE(name=loop_variable, list_expr=list_expression, pred=inner_condition)
+
+    def size_literal(self, items):
+        """Wrap ESTRING literals in LiteralValue to distinguish from entity references."""
+        # items[0] is the evaluated ESTRING (a Python string)
+        return LiteralValue(items[0])
+
+    def size_arg(self, items):
+        """
+        Transform size_arg: just pass through the child value.
+
+        items[0] can be:
+        - list_expression result (string entity_id like "n" or "n.name")
+        - LiteralValue (wrapped string literal like LiteralValue("hello"))
+        """
+        return items[0]
+
+    def size_function(self, items):
+        """
+        Parse: size(r) or size(relationships(r)) or size("hello")
+
+        items: [size_arg] where size_arg can be:
+        - string (entity reference from list_expression)
+        - LiteralValue (literal string)
+        """
+        arg = items[0]
+        # Pass the arg as-is, SIZE will handle both LiteralValue and string
+        return SIZE(list_expr=arg)
+
+    def relationships_function(self, items):
+        """Parse: relationships(path_variable)"""
+        path_variable = items[0].value if isinstance(items[0], Token) else items[0]
+        return path_variable  # Return as string, will be wrapped in ScopedListExpression
+
+    def entity_list(self, items):
+        """Parse: direct entity reference as list"""
+        entity_id = items[0]
+        return entity_id.value if isinstance(entity_id, Token) else entity_id
 
     def value_list(self, items):
         return list(items)

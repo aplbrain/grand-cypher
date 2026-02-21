@@ -842,7 +842,7 @@ class TestOrderBy:
         assert res["n.name"] == ["Alice", "Bob"]
         assert res["MIN(r.value)"] == [9, 14]
         assert res["MAX(r.value)"] == [40, 14]
-        assert res["COUNT(r.value)"] == [3, 1]
+        assert res["COUNT(r.value)"] == [2, 1]  # COUNT excludes None values
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_order_by_aggregation_fails_if_not_requested_in_return(self, graph_type):
@@ -1383,6 +1383,267 @@ class TestMultigraphRelations:
         res = GrandCypher(host).run(qry)
         assert res["COUNT(r.amount)"] == [2, 1]
         assert res["SUM(r.amount)"] == [52, 6]
+
+    def test_multigraph_aggregation_function_collect(self):
+        """Test COLLECT aggregation function"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice", age=25)
+        host.add_node("b", name="Bob", age=30)
+        host.add_node("c", name="Christine", age=35)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=40)
+        host.add_edge("a", "b", __labels__={"paid"}, amount=12)
+        host.add_edge("a", "c", __labels__={"owes"}, amount=39)
+        host.add_edge("b", "a", __labels__={"paid"}, amount=6)
+
+        # Test COLLECT with edge attributes
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN n.name, COLLECT(r.amount)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Bob"]
+        assert res["COLLECT(r.amount)"] == [[40, 12], [6]]
+
+        # Test COLLECT with node attributes
+        qry = """
+        MATCH (n)
+        RETURN COLLECT(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["COLLECT(n.name)"] == [["Alice", "Bob", "Christine"]]
+
+    def test_multigraph_collect_with_grouping(self):
+        """Test COLLECT with grouping by multiple keys"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_node("c", name="Charlie")
+        host.add_edge("a", "b", value=1)
+        host.add_edge("a", "b", value=2)
+        host.add_edge("b", "c", value=3)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, m.name, COLLECT(r.value)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Bob"]
+        assert res["m.name"] == ["Bob", "Charlie"]
+        assert res["COLLECT(r.value)"] == [[1, 2], [3]]
+
+
+class TestStringScalarFunctions:
+    """Tests for string scalar functions: toLower, toUpper, trim"""
+
+    def test_tolower_basic(self):
+        """Test toLower with node attribute"""
+        host = nx.DiGraph()
+        host.add_node("a", name="ALICE")
+        host.add_node("b", name="BOB")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, toLower(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["ALICE", "BOB"]
+        assert res["toLower(n.name)"] == ["alice", "bob"]
+
+    def test_tolower_mixed_case(self):
+        """Test toLower with mixed case strings"""
+        host = nx.DiGraph()
+        host.add_node("a", name="AlIcE")
+
+        qry = """
+        MATCH (n)
+        RETURN toLower(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["toLower(n.name)"] == ["alice"]
+
+    def test_toupper_basic(self):
+        """Test toUpper with node attribute"""
+        host = nx.DiGraph()
+        host.add_node("a", name="alice")
+        host.add_node("b", name="bob")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, toUpper(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["alice", "bob"]
+        assert res["toUpper(n.name)"] == ["ALICE", "BOB"]
+
+    def test_toupper_mixed_case(self):
+        """Test toUpper with mixed case strings"""
+        host = nx.DiGraph()
+        host.add_node("a", name="AlIcE")
+
+        qry = """
+        MATCH (n)
+        RETURN toUpper(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["toUpper(n.name)"] == ["ALICE"]
+
+    def test_trim_whitespace(self):
+        """Test trim with leading/trailing whitespace"""
+        host = nx.DiGraph()
+        host.add_node("a", name="  alice  ")
+        host.add_node("b", name="bob   ")
+        host.add_node("c", name="   charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, trim(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["  alice  ", "bob   ", "   charlie"]
+        assert res["trim(n.name)"] == ["alice", "bob", "charlie"]
+
+    def test_trim_no_whitespace(self):
+        """Test trim with no whitespace"""
+        host = nx.DiGraph()
+        host.add_node("a", name="alice")
+
+        qry = """
+        MATCH (n)
+        RETURN trim(n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["trim(n.name)"] == ["alice"]
+
+    # NOTE: Scalar functions work on LEFT side of WHERE conditions but not RIGHT side yet
+    # Currently supported: WHERE ID(A) == 1, WHERE toLower(n.name) = 'value'
+    # Not yet supported: WHERE ID(A) == ID(B), WHERE toLower(n.name) = toLower(m.name)
+    def test_string_functions_with_where(self):
+        """Test string functions in WHERE clause"""
+        host = nx.DiGraph()
+        host.add_node("a", name="ALICE")
+        host.add_node("b", name="BOB")
+
+        qry = """
+        MATCH (n)
+        WHERE toLower(n.name) = "alice"
+        RETURN n.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["n.name"]) == {"ALICE"}
+
+    def test_string_functions_combined(self):
+        """Test combining multiple string functions (nested)"""
+        host = nx.DiGraph()
+        host.add_node("a", name="  ALICE  ")
+        host.add_node("b", name="  bob  ")
+
+        qry = """
+        MATCH (n)
+        RETURN toLower(trim(n.name))
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["toLower(trim(n.name))"]) == {"alice", "bob"}
+
+    def test_nested_functions_multiple_levels(self):
+        """Test deeply nested functions"""
+        host = nx.DiGraph()
+        host.add_node("a", name="  HELLO  ")
+
+        qry = """
+        MATCH (n)
+        RETURN toUpper(trim(toLower(n.name)))
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["toUpper(trim(toLower(n.name)))"] == ["HELLO"]
+
+
+class TestTypeAndCoalesceScalarFunctions:
+    """Tests for type() and coalesce() scalar functions"""
+
+    def test_type_basic(self):
+        """Test type() with relationship labels"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=50)
+        host.add_edge("a", "b", __labels__={"owes"}, amount=20)
+
+        qry = """
+        MATCH (n)-[r]->(m)
+        RETURN n.name, type(r), r.amount
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["n.name"] == ["Alice", "Alice"]
+        assert set(res["type(r)"]) == {"paid", "owes"}
+
+    def test_type_with_specific_label(self):
+        """Test type() with specific relationship label filter"""
+        host = nx.MultiDiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b", name="Bob")
+        host.add_edge("a", "b", __labels__={"paid"}, amount=50)
+        host.add_edge("a", "b", __labels__={"owes"}, amount=20)
+
+        qry = """
+        MATCH (n)-[r:paid]->(m)
+        RETURN type(r)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["type(r)"] == ["paid"]
+
+    def test_coalesce_basic(self):
+        """Test coalesce() with multiple attributes"""
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", nickname=None)
+        host.add_node("b", nickname="Bobby")
+        host.add_node("c", name="Charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.nickname, n.name)
+        """
+        res = GrandCypher(host).run(qry)
+        # a: nickname is None, so use name "Alice"
+        # b: nickname is "Bobby"
+        # c: nickname missing, so use name "Charlie"
+        assert set(res["coalesce(n.nickname, n.name)"]) == {"Alice", "Bobby", "Charlie"}
+
+    def test_coalesce_first_non_null(self):
+        """Test that coalesce returns first non-null value"""
+        host = nx.DiGraph()
+        host.add_node("a", first=None, second="Second", third="Third")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.first, n.second, n.third)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["coalesce(n.first, n.second, n.third)"] == ["Second"]
+
+    def test_coalesce_all_null(self):
+        """Test coalesce when all values are null"""
+        host = nx.DiGraph()
+        host.add_node("a")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.missing1, n.missing2)
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["coalesce(n.missing1, n.missing2)"] == [None]
+
+    def test_coalesce_with_fallback(self):
+        """Test coalesce with a fallback attribute"""
+        host = nx.DiGraph()
+        host.add_node("a", id="id_a")
+        host.add_node("b", name="Bob", id="id_b")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.name, n.id)
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["coalesce(n.name, n.id)"]) == {"Bob", "id_a"}
 
 
 class TestAlias:
@@ -2731,3 +2992,722 @@ def test_equijoin2():
     assert GrandCypher(G).run(qry) == {
         "ID(n)": ["x"]
     }
+
+
+# ==============================================================================
+# CONSOLIDATED SCALAR AND AGGREGATION FUNCTION TESTS
+# ==============================================================================
+# Tests moved from test_aggregation_functions.py and test_list_predicates.py
+# to centralize all Cypher query tests in one place.
+# ==============================================================================
+
+
+class TestCoalesceScalarFunction:
+    """Tests for coalesce() scalar function with literal values.
+    Moved from test_aggregation_functions.py"""
+
+    def test_coalesce_with_double_quote_literal(self):
+        """Test coalesce with double-quoted string literal as fallback"""
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b")  # No name attribute
+        host.add_node("c", name="Charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.name, "Unknown")
+        """
+        res = GrandCypher(host).run(qry)
+
+        # Should return "Unknown" for node b which has no name
+        assert set(res[list(res.keys())[0]]) == {"Alice", "Unknown", "Charlie"}
+
+    def test_coalesce_distinguishes_literal_from_entity(self):
+        """Test that coalesce distinguishes between string literals and entity references"""
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice", backup="BackupA")
+        host.add_node("b", backup="BackupB")  # No name, but has backup
+        host.add_node("Unknown", value="I am a node")  # Node with ID "Unknown"
+
+        # Test 1: String literal "Unknown" should return the literal string
+        qry1 = """
+        MATCH (n)
+        RETURN coalesce(n.name, "Unknown")
+        """
+        res1 = GrandCypher(host).run(qry1)
+        # Should return "Unknown" as literal string for nodes b and Unknown (which have no name)
+        # Node a has name="Alice", nodes b and Unknown have no name so get "Unknown"
+        results1 = set(res1[list(res1.keys())[0]])
+        assert "Alice" in results1  # Node a
+        assert "Unknown" in results1  # Fallback for nodes b and Unknown
+        assert "I am a node" not in results1  # Should NOT look up node ID "Unknown"
+
+        # Test 2: Entity reference backup (no quotes) should look up the backup attribute
+        qry2 = """
+        MATCH (n)
+        RETURN coalesce(n.name, n.backup)
+        """
+        res2 = GrandCypher(host).run(qry2)
+        # Should return actual backup values
+        results2 = set(res2["coalesce(n.name, n.backup)"])
+        assert "Alice" in results2  # Node a has name
+        assert "BackupB" in results2  # Node b has no name, uses backup
+        # Node "Unknown" has neither name nor backup, so returns None
+        assert None in results2
+
+    def test_coalesce_multiple_literals(self):
+        """Test coalesce with multiple string literal fallbacks"""
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.name, n.nickname, "Default", "Final")
+        """
+        res = GrandCypher(host).run(qry)
+
+        # Node b has neither name nor nickname, should get first literal "Default"
+        assert set(res[list(res.keys())[0]]) == {"Alice", "Default"}
+
+    def test_coalesce_number_literal(self):
+        """Test coalesce with number literal as fallback"""
+        host = nx.DiGraph()
+        host.add_node("a", score=100)
+        host.add_node("b")  # No score
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.score, 0)
+        """
+        res = GrandCypher(host).run(qry)
+
+        assert set(res["coalesce(n.score, 0)"]) == {100, 0}
+
+    def test_coalesce_null_literal(self):
+        """Test coalesce explicitly with NULL"""
+        host = nx.DiGraph()
+        host.add_node("a", name="Alice")
+        host.add_node("b")
+
+        qry = """
+        MATCH (n)
+        RETURN coalesce(n.name, NULL, "Fallback")
+        """
+        res = GrandCypher(host).run(qry)
+
+        # NULL should be skipped, should use "Fallback" for node b
+        assert set(res[list(res.keys())[0]]) == {"Alice", "Fallback"}
+
+
+# ==============================================================================
+# LIST PREDICATE TESTS
+# ==============================================================================
+# Tests moved from test_list_predicates.py
+# Includes: ALL, ANY, NONE, SINGLE, SIZE, and combined tests
+# ==============================================================================
+
+
+class TestListPredicatesALL:
+    """Tests for ALL() list predicate.
+    Moved from test_list_predicates.py"""
+
+    def test_all_predicate_on_path_weights_true(self):
+        """Test ALL predicate returns true when all edges meet condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE ALL(edge IN r WHERE edge.weight > 5)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path a->b->c has weights [10, 20], both > 5
+        assert res == {"a.name": ["Alice"], "c.name": ["Charlie"]}
+
+    def test_all_predicate_on_path_weights_false(self):
+        """Test ALL predicate returns false when not all edges meet condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE ALL(edge IN r WHERE edge.weight > 15)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path a->b->c has weights [10, 20], not all > 15
+        # Path b->c->d has weights [20, 5], not all > 15
+        assert res == {"a.name": [], "c.name": []}
+
+    def test_all_predicate_variable_length_path(self):
+        """Test ALL with variable-length path [r*1..3]"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE ALL(edge IN r WHERE edge.weight >= 10)
+        RETURN a.name, b.name, size(relationships(r)) AS path_length
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Should find paths where all edges have weight >= 10
+        assert "Alice" in res["a.name"]  # a->b (weight=10)
+        assert "Bob" in res["a.name"]    # b->c (weight=20)
+
+    def test_all_combined_with_any(self):
+        """Test ALL combined with ANY in same query"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE ALL(edge IN r WHERE edge.weight > 0)
+              AND ANY(edge IN r WHERE edge.weight > 15)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Two paths match: a->b->c [10,20] and b->c->d [20,5]
+        # Both have all weights > 0 AND at least one > 15
+        assert set(res["a.name"]) == {"Alice", "Bob"}
+        assert set(res["c.name"]) == {"Charlie", "David"}
+
+    def test_all_with_size_function(self):
+        """Test ALL combined with size() function"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE size(relationships(r)) = 2
+              AND ALL(edge IN r WHERE edge.weight > 5)
+        RETURN a.name, b.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Only 2-hop paths where all weights > 5
+        assert "Alice" in res["a.name"]  # a->b->c
+
+
+class TestListPredicatesANY:
+    """Tests for ANY() list predicate.
+    Moved from test_list_predicates.py"""
+
+    def test_any_predicate_true(self):
+        """Test ANY predicate returns true when at least one edge meets condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE ANY(edge IN r WHERE edge.weight > 15)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path a->b->c has weight 20 > 15
+        assert "Alice" in res["a.name"]
+        assert "Charlie" in res["c.name"]
+
+    def test_any_predicate_false(self):
+        """Test ANY predicate returns false when no edges meet condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE ANY(edge IN r WHERE edge.weight > 100)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # No edges have weight > 100
+        assert res == {"a.name": [], "c.name": []}
+
+
+class TestListPredicatesNONE:
+    """Tests for NONE() list predicate.
+    Moved from test_list_predicates.py"""
+
+    def test_none_predicate_true(self):
+        """Test NONE predicate returns true when no edges meet condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE NONE(edge IN r WHERE edge.weight > 100)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # No edges have weight > 100, so NONE returns true for all paths
+        assert "Alice" in res["a.name"]
+        assert "Bob" in res["a.name"]
+
+    def test_none_predicate_false(self):
+        """Test NONE predicate returns false when at least one edge meets condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE NONE(edge IN r WHERE edge.weight > 15)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path a->b->c has weight 20 > 15, so excluded
+        # Path b->c->d has weight 20 > 15, so excluded
+        assert res == {"a.name": [], "c.name": []}
+
+    def test_none_combined_with_all(self):
+        """Test NONE combined with ALL"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE NONE(edge IN r WHERE edge.weight < 5)
+              AND ALL(edge IN r WHERE edge.weight > 0)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Paths where no edges < 5 and all edges > 0
+        assert "Alice" in res["a.name"]  # a->b->c: [10, 20]
+
+
+class TestListPredicatesSINGLE:
+    """Tests for SINGLE() list predicate.
+    Moved from test_list_predicates.py"""
+
+    def test_single_predicate_true(self):
+        """Test SINGLE predicate returns true when exactly one edge meets condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE SINGLE(edge IN r WHERE edge.weight > 15)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path a->b->c has exactly one edge with weight > 15 (20)
+        assert "Alice" in res["a.name"]
+        assert "Charlie" in res["c.name"]
+
+    def test_single_predicate_false_zero_matches(self):
+        """Test SINGLE predicate returns false when zero edges meet condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE SINGLE(edge IN r WHERE edge.weight > 100)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # No edges have weight > 100
+        assert res == {"a.name": [], "c.name": []}
+
+    def test_single_predicate_false_multiple_matches(self):
+        """Test SINGLE predicate returns false when multiple edges meet condition"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE SINGLE(edge IN r WHERE edge.weight > 5)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path a->b->c has TWO edges with weight > 5, so SINGLE is false
+        assert "Alice" not in res["a.name"]
+
+
+class TestSIZEFunction:
+    """Tests for size() function with lists.
+    Moved from test_list_predicates.py"""
+
+    def test_size_of_relationships(self):
+        """Test size() function on relationships list"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE size(relationships(r)) = 2
+        RETURN a.name, b.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Should find all 2-hop paths
+        assert "Alice" in res["a.name"]
+        assert "Bob" in res["a.name"]
+
+    def test_size_in_return_clause(self):
+        """Test size() in RETURN clause"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..2]->(b)
+        RETURN a.name, b.name, size(relationships(r)) AS path_length
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert "Alice" in res["a.name"]
+        assert 1 in res["path_length"]  # 1-hop paths
+        assert 2 in res["path_length"]  # 2-hop paths
+
+    def test_size_with_where_comparison(self):
+        """Test size() with comparison operators"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE size(relationships(r)) >= 2
+        RETURN a.name, b.name, size(relationships(r)) AS hops
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Should only get paths with 2 or more hops
+        assert all(h >= 2 for h in res["hops"])
+
+    def test_size_combined_with_predicates(self):
+        """Test size() combined with list predicates"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE size(relationships(r)) > 1
+              AND ALL(edge IN r WHERE edge.weight > 0)
+        RETURN a.name, b.name, size(relationships(r)) AS path_len
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Paths with >1 hop and all positive weights
+        assert all(pl > 1 for pl in res["path_len"])
+
+    def test_size_in_aggregation_context(self):
+        """Test size() with aggregation functions"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..2]->(b)
+        RETURN a.name, COUNT(r) AS path_count, AVG(size(relationships(r))) AS avg_length
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert "Alice" in res["a.name"]
+        assert all(isinstance(c, int) for c in res["path_count"])
+        # Check that avg_length is calculated for nested scalar function
+        assert all(isinstance(al, (int, float)) for al in res["avg_length"])
+
+    def test_size_with_literal_string(self):
+        """Test size() with literal string values"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+
+        qry = """
+        MATCH (n)
+        RETURN size("hello") AS len
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert res["len"] == [5]
+
+    def test_size_with_string_attribute(self):
+        """Test size() with string attributes from nodes"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+
+        qry = """
+        MATCH (n)
+        RETURN n.name, size(n.name) AS name_length
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Verify each name has correct length
+        for name, length in zip(res["n.name"], res["name_length"]):
+            assert length == len(name)
+
+        assert 5 in res["name_length"]  # "Alice"
+        assert 3 in res["name_length"]  # "Bob"
+        assert 7 in res["name_length"]  # "Charlie"
+
+    def test_size_with_empty_string(self):
+        """Test size() with empty string"""
+        G = nx.DiGraph()
+        G.add_node("a", name="")
+
+        qry = """
+        MATCH (n)
+        RETURN size(n.name) AS len
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert res["len"] == [0]
+
+    def test_size_with_literal_empty_string(self):
+        """Test size() with literal empty string"""
+        G = nx.DiGraph()
+        G.add_node("a")
+
+        qry = """
+        MATCH (n)
+        RETURN size("") AS len
+        """
+        res = GrandCypher(G).run(qry)
+
+        assert res["len"] == [0]
+
+    def test_size_string_in_where_clause(self):
+        """Test size() with strings in WHERE clause"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Alexander")
+
+        qry = """
+        MATCH (n)
+        WHERE size(n.name) > 5
+        RETURN n.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Only "Alexander" has more than 5 characters
+        assert res["n.name"] == ["Alexander"]
+
+    def test_size_with_various_string_lengths(self):
+        """Test size() with various string lengths"""
+        G = nx.DiGraph()
+        G.add_node("a", city="NYC")
+        G.add_node("b", city="Los Angeles")
+        G.add_node("c", city="SF")
+
+        qry = """
+        MATCH (n)
+        RETURN n.city, size(n.city) AS city_len
+        ORDER BY city_len
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Lengths should be 2, 3, 11 (SF, NYC, Los Angeles)
+        assert sorted(res["city_len"]) == [2, 3, 11]
+
+
+class TestListPredicatesCombined:
+    """Tests combining multiple list predicates.
+    Moved from test_list_predicates.py"""
+
+    def test_all_and_any_combined(self):
+        """Test ALL and ANY in same WHERE clause"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE ALL(edge IN r WHERE edge.weight > 0)
+              AND ANY(edge IN r WHERE edge.weight > 15)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Path must have all edges positive AND at least one > 15
+        assert "Alice" in res["a.name"]
+
+    def test_single_and_none_combined(self):
+        """Test SINGLE and NONE in same WHERE clause"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*2]->(c)
+        WHERE SINGLE(edge IN r WHERE edge.weight > 15)
+              AND NONE(edge IN r WHERE edge.weight < 5)
+        RETURN a.name, c.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Exactly one edge > 15 and no edges < 5
+        assert "Alice" in res["a.name"]  # a->b->c: [10, 20]
+
+    def test_nested_list_expressions(self):
+        """Test predicates with size() and other functions"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE size(relationships(r)) = 2
+              AND ALL(edge IN r WHERE edge.weight >= 10)
+              AND ANY(edge IN r WHERE edge.weight = 20)
+        RETURN a.name, b.name
+        """
+        res = GrandCypher(G).run(qry)
+
+        # 2-hop paths where all weights >= 10 and at least one = 20
+        assert "Alice" in res["a.name"]
+
+    def test_complex_predicate_logic(self):
+        """Test complex boolean logic with predicates"""
+        G = nx.DiGraph()
+        G.add_node("a", name="Alice")
+        G.add_node("b", name="Bob")
+        G.add_node("c", name="Charlie")
+        G.add_node("d", name="David")
+        G.add_edge("a", "b", weight=10)
+        G.add_edge("b", "c", weight=20)
+        G.add_edge("c", "d", weight=5)
+
+        qry = """
+        MATCH (a)-[r*1..3]->(b)
+        WHERE (size(relationships(r)) = 1 AND ANY(edge IN r WHERE edge.weight = 10))
+              OR (size(relationships(r)) = 2 AND ALL(edge IN r WHERE edge.weight >= 10))
+        RETURN a.name, b.name, size(relationships(r)) AS hops
+        """
+        res = GrandCypher(G).run(qry)
+
+        # Should match: 1-hop with weight=10 OR 2-hop with all weights>=10
+        assert "Alice" in res["a.name"]
