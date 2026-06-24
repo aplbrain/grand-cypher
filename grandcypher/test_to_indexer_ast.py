@@ -1,6 +1,9 @@
 from . import (
+    ArithmeticExpression,
     Condition,
     CompoundCondition,
+    EntityRef,
+    IDRef,
     LambdaCompareCondition,
     AND,
     OR,
@@ -51,9 +54,9 @@ def test_compound_condition_unwraps_into_compare():
     inner = LambdaCompareCondition(lambda x,y: True, "<")
     comp = CompoundCondition(
         should_be=True,
-        entity_id="B.height",
+        left="B.height",
         operator=inner,
-        value=200,
+        right=200,
     )
 
     ast = to_indexer_ast(comp)
@@ -146,3 +149,60 @@ def test_exists_subquery_returns_skip():
     ast = to_indexer_ast(cond)
 
     assert isinstance(ast, UnsupportedOp)
+
+
+# === 8. ArithmeticExpression in left/right → UnsupportedOp ===
+
+def test_arithmetic_left_returns_unsupportedop():
+    arith = ArithmeticExpression("A.x", "-", "A.y")
+    cond = CompoundCondition(
+        should_be=True,
+        left=arith,
+        operator=make_lambda_compare("<"),
+        right=50,
+    )
+
+    ast = to_indexer_ast(cond)
+    assert isinstance(ast, UnsupportedOp)
+
+
+def test_arithmetic_value_returns_unsupportedop():
+    arith = ArithmeticExpression("A.x", "+", 10)
+    cond = CompoundCondition(
+        should_be=True,
+        left="A.total",
+        operator=make_lambda_compare(">"),
+        right=arith,
+    )
+
+    ast = to_indexer_ast(cond)
+    assert isinstance(ast, UnsupportedOp)
+
+
+def test_arithmetic_in_and_returns_unsupportedop_branch():
+    arith = ArithmeticExpression("A.x", "*", "A.y")
+    left = CompoundCondition(True, arith, make_lambda_compare(">"), 100)
+    right = CompoundCondition(True, "B.score", make_lambda_compare("<"), 5)
+
+    cond = AND(left, right)
+    ast = to_indexer_ast(cond)
+
+    assert isinstance(ast, IndexerAnd)
+    assert isinstance(ast._a, UnsupportedOp)
+    assert isinstance(ast._b, IndexerCompare)
+
+
+# === 9. IDRef strips to entity_name ===
+
+def test_id_ref_entity_strips_to_entity_name():
+    cond = CompoundCondition(
+        should_be=True,
+        left=IDRef("A"),
+        operator=make_lambda_compare(">"),
+        right=5,
+    )
+
+    ast = to_indexer_ast(cond)
+    assert isinstance(ast, IndexerCompare)
+    assert ast._key == "A"
+    assert ast._value == 5
