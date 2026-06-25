@@ -3078,3 +3078,21 @@ class TestArithmeticExpressions:
         """
         with pytest.raises(TypeError):
             GrandCypher(host).run(qry)
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_id_inequality_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node(1, name="Alice")
+        host.add_node(2, name="Bob")
+        host.add_node(3, name="Charlie")
+        host.add_edge(1, 2)
+        host.add_edge(2, 3)
+
+        res = GrandCypher(host).run("MATCH (A) WHERE ID(A) > 1 RETURN A.name")
+        assert res["A.name"] == ["Bob", "Charlie"]
+
+        res = GrandCypher(host).run("MATCH (A) WHERE ID(A) >= 2 RETURN A.name")
+        assert res["A.name"] == ["Bob", "Charlie"]
+
+        res = GrandCypher(host).run("MATCH (A) WHERE ID(A) < 3 RETURN A.name")
+        assert res["A.name"] == ["Alice", "Bob"]

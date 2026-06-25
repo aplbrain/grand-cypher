@@ -827,10 +827,10 @@ def to_indexer_ast(condition: Condition, left = None, right = None, should_be=Tr
                                 should_be=condition._should_be)
     if isinstance(left, ArithmeticExpression) or isinstance(right, ArithmeticExpression):
         return IndexerUnsupportedOp(condition, left, right)
+    if isinstance(left, IDRef) or isinstance(right, IDRef):
+        return IndexerUnsupportedOp(condition, left, right)
     if (isinstance(condition, LambdaCompareCondition) and
         condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
-        if isinstance(left, IDRef):
-            left = left.entity_name
         operator = condition._operator
         if should_be is True:
             operator = WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]

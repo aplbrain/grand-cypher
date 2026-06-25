@@ -192,9 +192,9 @@ def test_arithmetic_in_and_returns_unsupportedop_branch():
     assert isinstance(ast._b, IndexerCompare)
 
 
-# === 9. IDRef strips to entity_name ===
+# === 9. IDRef → UnsupportedOp (indexer cannot filter by node ID) ===
 
-def test_id_ref_entity_strips_to_entity_name():
+def test_id_ref_returns_unsupportedop():
     cond = CompoundCondition(
         should_be=True,
         left=IDRef("A"),
@@ -203,6 +203,4 @@ def test_id_ref_entity_strips_to_entity_name():
     )
 
     ast = to_indexer_ast(cond)
-    assert isinstance(ast, IndexerCompare)
-    assert ast._key == "A"
-    assert ast._value == 5
+    assert isinstance(ast, UnsupportedOp)
