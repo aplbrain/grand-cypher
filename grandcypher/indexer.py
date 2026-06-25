@@ -7,7 +7,7 @@ from typing import Any, Callable, Hashable, TypeVar, Union
 from bisect import bisect_left, bisect_right
 from cachetools import LRUCache
 
-from .types import IDRef
+from .types import AttributeRef, IDRef
 
 
 T = TypeVar("T")
@@ -241,16 +241,21 @@ class OR:
 
 class Compare:
     def __init__(self, op, key, value):
+        if not isinstance(key, (AttributeRef, IDRef)):
+            raise TypeError(
+                f"Compare received unexpected key type {type(key).__name__}, "
+                f"expected AttributeRef or IDRef"
+            )
+        if isinstance(key, IDRef) and op != "==":
+            raise ValueError(
+                f"ID() comparisons only support '==' in the indexer, got '{op}'"
+            )
         self._op = op
         self._key = key
         self._value = value
 
     def __call__(self, indexer: ArrayAttributeIndexer):
         if isinstance(self._key, IDRef):
-            if self._op != "==":
-                raise ValueError(
-                    f"ID() comparisons only support '==' in the indexer, got '{self._op}'"
-                )
             return {self._key.entity_name: {self._value}}
         querier = indexer.get_index_querier(self._key.attribute)
         comparator = querier.get_comparator(self._op)
