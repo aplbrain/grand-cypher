@@ -1112,6 +1112,10 @@ class GrandCypherExecutor:
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
+        self._return_requests = [
+            r if isinstance(r, (EntityRef, IDRef)) else str(r)
+            for r in self._return_requests
+        ]
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
