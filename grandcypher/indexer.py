@@ -244,18 +244,9 @@ class Compare:
         self._value = value
 
     def __call__(self, indexer: ArrayAttributeIndexer):
-        name_attr = self._key.split(".")
-        if len(name_attr) == 1:
-            try:
-                iter(self._value)
-                value = self._value
-            except TypeError:
-                value = [self._value]
-            return {self._key: set(value)}
-        name, attr= name_attr
-        querier = indexer.get_index_querier(attr)
+        querier = indexer.get_index_querier(self._key.attribute)
         comparator = querier.get_comparator(self._op)
-        return {name: comparator(self._value)}
+        return {self._key.entity_name: comparator(self._value)}
 
 
 class UnsupportedOp:

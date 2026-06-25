@@ -245,16 +245,26 @@ _ARITH_OPS = {
 
 
 class EntityRef(str):
-    """Reference to a node/edge attribute, e.g. A.value.
+    """Bare node/edge reference, e.g. A.
 
-    Remains a str subclass because the RETURN path uses these as dict keys
+    str subclass because the RETURN path uses these as dict keys
     and passes them through isinstance(item, str) checks.
     """
-    def __new__(cls, entity_name, attribute=None):
-        value = f"{entity_name}.{attribute}" if attribute else str(entity_name)
-        instance = super().__new__(cls, value)
+    def __new__(cls, entity_name):
+        instance = super().__new__(cls, str(entity_name))
         instance.entity_name = str(entity_name)
-        instance.attribute = str(attribute) if attribute else None
+        return instance
+
+
+class AttributeRef(str):
+    """Node/edge attribute reference, e.g. A.age.
+
+    str subclass for the same reason as EntityRef.
+    """
+    def __new__(cls, entity_name, attribute):
+        instance = super().__new__(cls, f"{entity_name}.{attribute}")
+        instance.entity_name = str(entity_name)
+        instance.attribute = str(attribute)
         return instance
 
 
@@ -294,19 +304,22 @@ def _resolve_operand(operand, match, host, return_edges):
         if operand.entity_name in match.node_mappings:
             return match.node_mappings[operand.entity_name]
         raise IndexError(f"Entity {operand.entity_name} not in match.")
-    if isinstance(operand, EntityRef):
+    if isinstance(operand, AttributeRef):
         entity_name = operand.entity_name
         attribute = operand.attribute
         if entity_name in match.node_mappings:
             host_node_id = match.node_mappings[entity_name]
-            if attribute:
-                return get_node_from_host(host, host_node_id, attribute)
-            return get_node_from_host(host, host_node_id)
+            return get_node_from_host(host, host_node_id, attribute)
         if entity_name in return_edges:
             edge_mapping = return_edges[entity_name]
             host_edges = match.mth.edge(*edge_mapping).edges
             return get_edge_from_host(host, host_edges, attribute)
         raise IndexError(f"Entity {operand} not in graph.")
+    if isinstance(operand, EntityRef):
+        raise TypeError(
+            f"Cannot use bare entity '{operand}' in a comparison. "
+            f"Use a property like '{operand}.attribute' or ID({operand})."
+        )
     return operand
 
 
@@ -775,8 +788,10 @@ _BOOL_ARI = {
 def _data_path_to_entity_name_attribute(data_path):
     if isinstance(data_path, IDRef):
         return data_path.entity_name, None
-    if isinstance(data_path, EntityRef):
+    if isinstance(data_path, AttributeRef):
         return data_path.entity_name, data_path.attribute
+    if isinstance(data_path, EntityRef):
+        return data_path.entity_name, None
     if isinstance(data_path, Token):
         data_path = data_path.value
     if "." in data_path:
@@ -825,12 +840,10 @@ def to_indexer_ast(condition: Condition, left = None, right = None, should_be=Tr
                                 left=condition._left,
                                 right=condition._right,
                                 should_be=condition._should_be)
-    if isinstance(left, ArithmeticExpression) or isinstance(right, ArithmeticExpression):
-        return IndexerUnsupportedOp(condition, left, right)
-    if isinstance(left, IDRef) or isinstance(right, IDRef):
-        return IndexerUnsupportedOp(condition, left, right)
     if (isinstance(condition, LambdaCompareCondition) and
-        condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
+        condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS and
+        isinstance(left, AttributeRef) and
+        isinstance(right, (int, float, str, bool, type(None)))):
         operator = condition._operator
         if should_be is True:
             operator = WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
@@ -857,7 +870,7 @@ def motif_to_indexer_ast(motif: nx.DiGraph) -> IndexerConditionAST:
         for k, v in json_data.items():
             if k == "__labels__":
                 continue
-            k = cname + "." + k
+            k = AttributeRef(cname, k)
             if ast is None:
                 ast = IndexerCompare("==", k, v)
             else:
@@ -1113,7 +1126,7 @@ class GrandCypherExecutor:
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
         self._return_requests = [
-            r if isinstance(r, (EntityRef, IDRef)) else str(r)
+            r if isinstance(r, (EntityRef, AttributeRef, IDRef)) else str(r)
             for r in self._return_requests
         ]
 
@@ -1635,7 +1648,7 @@ class GrandCypherTransformer(Transformer):
 
     def entity_id(self, entity_id):
         if len(entity_id) == 2:
-            return EntityRef(entity_id[0], entity_id[1])
+            return AttributeRef(entity_id[0], entity_id[1])
         return EntityRef(entity_id[0].value)
 
     def edge_match(self, edge_tokens):

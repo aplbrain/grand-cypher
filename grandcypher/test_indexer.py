@@ -1,4 +1,5 @@
 import pytest
+from . import AttributeRef
 from .indexer import (
     SKIP, AND, OR, Compare, IndexerConditionRunner, NoIndexQuerier, ArrayAttributeIndexer,
     IncrementIndexQuerier)
@@ -40,7 +41,7 @@ def test_compare_returns_correct_mapping():
         }
     })
 
-    c = Compare(">", "A.age", 20)
+    c = Compare(">", AttributeRef("A", "age"), 20)
     result = c(indexer)
 
     assert result == {"A": {10, 11}}
@@ -52,8 +53,8 @@ def test_and_basic_intersection():
         "height": {"<": {2,3,4}},
     })
 
-    left  = Compare(">", "A.age", 20)       # {"A": {1,2,3}}
-    right = Compare("<", "A.height", 100)   # {"A": {2,3,4}}
+    left  = Compare(">", AttributeRef("A", "age"), 20)       # {"A": {1,2,3}}
+    right = Compare("<", AttributeRef("A", "height"), 100)   # {"A": {2,3,4}}
 
     node = AND(left, right)
     result = node(indexer)
@@ -68,7 +69,7 @@ def test_and_left_is_skip():
     })
 
     left = SKIP()
-    right = Compare(">", "A.age", 20)
+    right = Compare(">", AttributeRef("A", "age"), 20)
     node = AND(left, right)
 
     assert node(indexer) == {"A": {1,2,3}}
@@ -80,7 +81,7 @@ def test_and_right_is_skip():
         "age": {">": {1}},
     })
 
-    left = Compare(">", "A.age", 20)
+    left = Compare(">", AttributeRef("A", "age"), 20)
     right = SKIP()
     node = AND(left, right)
 
@@ -94,8 +95,8 @@ def test_and_two_variables():
         "score": {"<": {5,6}},
     })
 
-    a = Compare(">", "A.age", 20)        # {"A": {1,2}}
-    b = Compare("<", "B.score", 200)     # {"B": {5,6}}
+    a = Compare(">", AttributeRef("A", "age"), 20)        # {"A": {1,2}}
+    b = Compare("<", AttributeRef("B", "score"), 200)     # {"B": {5,6}}
 
     node = AND(a, b)
     result = node(indexer)
@@ -112,8 +113,8 @@ def test_or_union():
         "age": {">": {1,2}, "<": {2,3}},
     })
 
-    a = Compare(">", "A.age", 20)      # {"A": {1,2}}
-    b = Compare("<", "A.age", 100)     # {"A": {2,3}}
+    a = Compare(">", AttributeRef("A", "age"), 20)      # {"A": {1,2}}
+    b = Compare("<", AttributeRef("A", "age"), 100)     # {"A": {2,3}}
 
     node = OR(a, b)
     result = node(indexer)
@@ -128,8 +129,8 @@ def test_or_disjoint_keys():
         "score": {"<": {9}},
     })
 
-    a = Compare(">", "A.age", 0)         # {"A": {1}}
-    b = Compare("<", "B.score", 100)     # {"B": {9}}
+    a = Compare(">", AttributeRef("A", "age"), 0)         # {"A": {1}}
+    b = Compare("<", AttributeRef("B", "score"), 100)     # {"B": {9}}
 
     result = OR(a, b)(indexer)
 
@@ -145,7 +146,7 @@ def test_runner_executes_ast():
         "age": {">": {7}},
     })
 
-    ast = Compare(">", "A.age", 10)
+    ast = Compare(">", AttributeRef("A", "age"), 10)
     runner = IndexerConditionRunner(indexer)
 
     assert runner.find(ast) == {"A": {7}}
@@ -165,10 +166,10 @@ def test_nested_ast():
 
     ast = AND(
         OR(
-            Compare(">", "A.age", 10),   # {1,2,3}
-            Compare("<", "A.age", 100),  # {3,4}
+            Compare(">", AttributeRef("A", "age"), 10),   # {1,2,3}
+            Compare("<", AttributeRef("A", "age"), 100),  # {3,4}
         ),
-        Compare("==", "B.score", 10)     # {10}
+        Compare("==", AttributeRef("B", "score"), 10)     # {10}
     )
 
     result = ast(indexer)
@@ -187,7 +188,7 @@ def test_or_with_skip():
 
     ast = OR(
         SKIP(),                         # {}
-        Compare(">", "A.age", 10)       # {"A": {5}}
+        Compare(">", AttributeRef("A", "age"), 10)       # {"A": {5}}
     )
 
     result = ast(indexer)
