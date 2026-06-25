@@ -7,6 +7,8 @@ from typing import Any, Callable, Hashable, TypeVar, Union
 from bisect import bisect_left, bisect_right
 from cachetools import LRUCache
 
+from .types import IDRef
+
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -244,6 +246,12 @@ class Compare:
         self._value = value
 
     def __call__(self, indexer: ArrayAttributeIndexer):
+        if isinstance(self._key, IDRef):
+            if self._op != "==":
+                raise ValueError(
+                    f"ID() comparisons only support '==' in the indexer, got '{self._op}'"
+                )
+            return {self._key.entity_name: {self._value}}
         querier = indexer.get_index_querier(self._key.attribute)
         comparator = querier.get_comparator(self._op)
         return {self._key.entity_name: comparator(self._value)}

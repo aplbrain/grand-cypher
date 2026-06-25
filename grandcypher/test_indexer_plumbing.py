@@ -66,7 +66,18 @@ class TestIndexerProducesHints:
 
 class TestIndexerFallsBackToFullScan:
 
-    def test_id_ref_produces_no_hints(self):
+    def test_id_equality_produces_hints(self):
+        host = nx.DiGraph()
+        host.add_node(1, name="Alice")
+        host.add_node(2, name="Bob")
+        host.add_node(3, name="Charlie")
+        host.add_edge(1, 2)
+        host.add_edge(2, 3)
+
+        hints = _get_hints(host, "MATCH (A) WHERE ID(A) == 2 RETURN A")
+        assert _hint_values(hints, "A") == {2}
+
+    def test_id_inequality_produces_no_hints(self):
         host = nx.DiGraph()
         host.add_node(1, name="Alice")
         host.add_node(2, name="Bob")

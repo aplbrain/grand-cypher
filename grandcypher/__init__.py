@@ -26,6 +26,7 @@ from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
     AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
+from .types import EntityRef, AttributeRef, IDRef
 
 
 _GrandCypherGrammar = Lark(
@@ -242,41 +243,6 @@ _ARITH_OPS = {
     "/": lambda a, b: a // b if isinstance(a, int) and isinstance(b, int) else a / b,
     "%": lambda a, b: a % b,
 }
-
-
-class EntityRef(str):
-    """Bare node/edge reference, e.g. A.
-
-    str subclass because the RETURN path uses these as dict keys
-    and passes them through isinstance(item, str) checks.
-    """
-    def __new__(cls, entity_name):
-        instance = super().__new__(cls, str(entity_name))
-        instance.entity_name = str(entity_name)
-        return instance
-
-
-class AttributeRef(str):
-    """Node/edge attribute reference, e.g. A.age.
-
-    str subclass for the same reason as EntityRef.
-    """
-    def __new__(cls, entity_name, attribute):
-        instance = super().__new__(cls, f"{entity_name}.{attribute}")
-        instance.entity_name = str(entity_name)
-        instance.attribute = str(attribute)
-        return instance
-
-
-class IDRef(str):
-    """Reference to ID(A) in WHERE clauses.
-
-    str subclass for the same reason as EntityRef.
-    """
-    def __new__(cls, entity_name):
-        instance = super().__new__(cls, f"ID({entity_name})")
-        instance.entity_name = str(entity_name)
-        return instance
 
 
 class ArithmeticExpression:
@@ -799,7 +765,6 @@ def _data_path_to_entity_name_attribute(data_path):
     else:
         entity_name = data_path
         entity_attribute = None
-
     return entity_name, entity_attribute
 
 
@@ -850,6 +815,12 @@ def to_indexer_ast(condition: Condition, left = None, right = None, should_be=Tr
         else:
             operator = NOT_WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
         return IndexerCompare(operator, left, right)
+    if (isinstance(condition, LambdaCompareCondition) and
+        condition._operator == "==" and
+        should_be is True and
+        isinstance(left, IDRef) and
+        isinstance(right, (int, float, str, bool))):
+        return IndexerCompare("==", left, right)
     if isinstance(condition, OR):
         return IndexerOr(
             to_indexer_ast(condition._condition_a, left, right),

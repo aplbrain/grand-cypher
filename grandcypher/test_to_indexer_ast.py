@@ -213,7 +213,20 @@ def test_arithmetic_right_returns_unsupportedop():
     assert isinstance(ast, UnsupportedOp)
 
 
-def test_id_ref_left_returns_unsupportedop():
+def test_id_ref_equality_produces_compare():
+    cond = CompoundCondition(
+        should_be=True,
+        left=IDRef("A"),
+        operator=make_lambda_compare("=="),
+        right=5,
+    )
+    ast = to_indexer_ast(cond)
+    assert isinstance(ast, IndexerCompare)
+    assert ast._key == IDRef("A")
+    assert ast._value == 5
+
+
+def test_id_ref_inequality_returns_unsupportedop():
     cond = CompoundCondition(
         should_be=True,
         left=IDRef("A"),
