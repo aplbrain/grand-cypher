@@ -239,8 +239,8 @@ _ARITH_OPS = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
     "*": lambda a, b: a * b,
-    # Integer division to match Neo4j/Cypher semantics
-    "/": lambda a, b: a // b if isinstance(a, int) and isinstance(b, int) else a / b,
+    # Truncate-toward-zero integer division to match Neo4j/Cypher semantics
+    "/": lambda a, b: int(a / b) if isinstance(a, int) and isinstance(b, int) else a / b,
     "%": lambda a, b: a % b,
 }
 

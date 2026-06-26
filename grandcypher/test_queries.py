@@ -2783,6 +2783,20 @@ class TestArithmeticExpressions:
         assert set(res["A.total"]) == {7, 10}
 
     @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_negative_integer_division_truncates_toward_zero(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=-7, divisor=2)
+        host.add_edge("a", "a")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value / A.divisor == -3
+        RETURN A.value
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.value"] == [-7]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
     def test_float_division_in_where(self, graph_type):
         host = graph_type()
         host.add_node("a", total=7.0, count=2)
