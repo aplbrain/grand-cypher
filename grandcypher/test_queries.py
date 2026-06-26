@@ -2731,3 +2731,382 @@ def test_equijoin2():
     assert GrandCypher(G).run(qry) == {
         "ID(n)": ["x"]
     }
+
+
+class TestArithmeticExpressions:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_subtraction_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node("a", amount1=100, amount2=60)
+        host.add_node("b", amount1=100, amount2=80)
+        host.add_node("c", amount1=200, amount2=10)
+        host.add_edge("a", "b")
+        host.add_edge("b", "c")
+
+        qry = """
+        MATCH (A)
+        WHERE A.amount1 - A.amount2 < 50
+        RETURN A.amount1, A.amount2
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["A.amount1"]) == 2
+        assert set(zip(res["A.amount1"], res["A.amount2"])) == {(100, 60), (100, 80)}
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_multiplication_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node("a", price=10, quantity=5)
+        host.add_node("b", price=20, quantity=100)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.price * A.quantity > 100
+        RETURN A.price
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.price"] == [20]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_integer_division_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node("a", total=7, count=2)
+        host.add_node("b", total=10, count=3)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.total / A.count == 3
+        RETURN A.total
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["A.total"]) == {7, 10}
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_negative_integer_division_truncates_toward_zero(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=-7, divisor=2)
+        host.add_edge("a", "a")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value / A.divisor == -3
+        RETURN A.value
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.value"] == [-7]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_float_division_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node("a", total=7.0, count=2)
+        host.add_node("b", total=10, count=3)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.total / A.count > 3.4
+        RETURN A.total
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.total"] == [7.0]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_addition_with_literal(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=5)
+        host.add_node("b", value=15)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value + 10 > 20
+        RETURN A.value
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.value"] == [15]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_modulo_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=4)
+        host.add_node("b", value=7)
+        host.add_node("c", value=10)
+        host.add_edge("a", "b")
+        host.add_edge("b", "c")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value % 2 == 0
+        RETURN A.value
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["A.value"]) == {4, 10}
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_parenthesized_arithmetic(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=3, y=2)
+        host.add_node("b", x=30, y=25)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE (A.x + A.y) * 2 < 20
+        RETURN A.x
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [3]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_non_numeric_properties_no_crash(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value="hello")
+        host.add_node("b", value=10)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value + 1 > 5
+        RETURN A.value
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.value"] == [10]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_division_by_zero_no_crash(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=10, y=0)
+        host.add_node("b", x=10, y=2)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.x / A.y > 1
+        RETURN A.x, A.y
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [10]
+        assert res["A.y"] == [2]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_arithmetic_on_right_side(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=10, threshold=8)
+        host.add_node("b", value=10, threshold=12)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value > A.threshold - 5
+        RETURN A.value, A.threshold
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["A.value"]) == 2
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_chained_arithmetic(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=10, y=3, z=2)
+        host.add_node("b", x=10, y=3, z=20)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.x + A.y - A.z > 5
+        RETURN A.x
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [10]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_nested_parenthesized_arithmetic(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=2, y=3)
+        host.add_node("b", x=10, y=1)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE ((A.x + 1) * 2) - 3 > 10
+        RETURN A.x
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [10]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_arithmetic_with_edge_attributes(self, graph_type):
+        host = graph_type()
+        host.add_node("a")
+        host.add_node("b")
+        host.add_edge("a", "b", weight=10, penalty=3)
+
+        qry = """
+        MATCH (A)-[E]->(B)
+        WHERE E.weight - E.penalty > 5
+        RETURN A, B
+        """
+        res = GrandCypher(host).run(qry)
+        assert len(res["A"]) == 1
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_arithmetic_with_id_function(self, graph_type):
+        host = graph_type()
+        host.add_node(1, value=10)
+        host.add_node(2, value=20)
+        host.add_node(3, value=30)
+        host.add_edge(1, 2)
+        host.add_edge(2, 3)
+
+        qry = """
+        MATCH (A)
+        WHERE ID(A) + 1 > 2
+        RETURN ID(A)
+        """
+        res = GrandCypher(host).run(qry)
+        assert set(res["ID(A)"]) == {2, 3}
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_arithmetic_missing_attribute(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=10)
+        host.add_node("b")
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.value + 1 > 5
+        RETURN A.value
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.value"] == [10]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_literal_string_with_dot_not_confused_with_entity(self, graph_type):
+        host = graph_type()
+        host.add_node("a", club="Mr. Hi")
+        host.add_node("b", club="Officer")
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.club == "Mr. Hi"
+        RETURN A.club
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.club"] == ["Mr. Hi"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_literal_string_matching_entity_name_not_resolved(self, graph_type):
+        host = graph_type()
+        host.add_node("a", name="A.special", special="wrong")
+        host.add_node("b", name="other")
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE A.name == "A.special"
+        RETURN A.name
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.name"] == ["A.special"]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_unbound_entity_in_where_should_error(self, graph_type):
+        host = graph_type()
+        host.add_node("a", value=10)
+        host.add_node("b", value=20)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)-[]->(C)
+        WHERE B.value > 5
+        RETURN A.value
+        """
+        with pytest.raises(IndexError):
+            GrandCypher(host).run(qry)
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_arithmetic_with_and(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=10, y=3)
+        host.add_node("b", x=2, y=100)
+        host.add_node("c", x=10, y=100)
+        host.add_edge("a", "b")
+        host.add_edge("b", "c")
+
+        qry = """
+        MATCH (A)
+        WHERE A.x + 1 > 5 AND A.y * 2 < 20
+        RETURN A.x, A.y
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [10]
+        assert res["A.y"] == [3]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_arithmetic_with_not(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=20, y=5)
+        host.add_node("b", x=3, y=1)
+        host.add_edge("a", "b")
+
+        qry = """
+        MATCH (A)
+        WHERE NOT A.x - A.y > 10
+        RETURN A.x
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [3]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_cross_entity_arithmetic(self, graph_type):
+        host = graph_type()
+        host.add_node("a", x=20)
+        host.add_node("b", y=5)
+        host.add_node("c", y=18)
+        host.add_edge("a", "b")
+        host.add_edge("a", "c")
+
+        qry = """
+        MATCH (A)-[]->(B)
+        WHERE A.x - B.y > 5
+        RETURN A.x, B.y
+        """
+        res = GrandCypher(host).run(qry)
+        assert res["A.x"] == [20]
+        assert res["B.y"] == [5]
+
+    @pytest.mark.xfail(reason="bare entity names bypass entity_id() due to ? grammar prefix — silently returns empty instead of raising")
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_bare_entity_name_in_where_should_error(self, graph_type):
+        host = graph_type()
+        host.add_node(1, value=10)
+        host.add_node(2, value=20)
+        host.add_edge(1, 2)
+
+        qry = """
+        MATCH (A)
+        WHERE A + 0 > 1
+        RETURN ID(A)
+        """
+        with pytest.raises(TypeError):
+            GrandCypher(host).run(qry)
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_id_inequality_in_where(self, graph_type):
+        host = graph_type()
+        host.add_node(1, name="Alice")
+        host.add_node(2, name="Bob")
+        host.add_node(3, name="Charlie")
+        host.add_edge(1, 2)
+        host.add_edge(2, 3)
+
+        res = GrandCypher(host).run("MATCH (A) WHERE ID(A) > 1 RETURN A.name")
+        assert res["A.name"] == ["Bob", "Charlie"]
+
+        res = GrandCypher(host).run("MATCH (A) WHERE ID(A) >= 2 RETURN A.name")
+        assert res["A.name"] == ["Bob", "Charlie"]
+
+        res = GrandCypher(host).run("MATCH (A) WHERE ID(A) < 3 RETURN A.name")
+        assert res["A.name"] == ["Alice", "Bob"]

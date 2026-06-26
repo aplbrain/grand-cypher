@@ -7,6 +7,8 @@ from typing import Any, Callable, Hashable, TypeVar, Union
 from bisect import bisect_left, bisect_right
 from cachetools import LRUCache
 
+from .types import AttributeRef, IDRef
+
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -239,23 +241,25 @@ class OR:
 
 class Compare:
     def __init__(self, op, key, value):
+        if not isinstance(key, (AttributeRef, IDRef)):
+            raise TypeError(
+                f"Compare received unexpected key type {type(key).__name__}, "
+                f"expected AttributeRef or IDRef"
+            )
+        if isinstance(key, IDRef) and op != "==":
+            raise ValueError(
+                f"ID() comparisons only support '==' in the indexer, got '{op}'"
+            )
         self._op = op
         self._key = key
         self._value = value
 
     def __call__(self, indexer: ArrayAttributeIndexer):
-        name_attr = self._key.split(".")
-        if len(name_attr) == 1:
-            try:
-                iter(self._value)
-                value = self._value
-            except TypeError:
-                value = [self._value]
-            return {self._key: set(value)}
-        name, attr= name_attr
-        querier = indexer.get_index_querier(attr)
+        if isinstance(self._key, IDRef):
+            return {self._key.entity_name: {self._value}}
+        querier = indexer.get_index_querier(self._key.attribute)
         comparator = querier.get_comparator(self._op)
-        return {name: comparator(self._value)}
+        return {self._key.entity_name: comparator(self._value)}
 
 
 class UnsupportedOp:
