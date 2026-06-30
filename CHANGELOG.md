@@ -1,5 +1,12 @@
 # CHANGELOG
 
+### **1.1.0** (June 30, 2026)
+
+### Features
+
+-   Support for `WHERE` clause arithmetic with mathematical operators `+`, `-`, `*`, `/`, and `%` (#98, thanks @q-rosiebloxsom!)
+-   Support for pickling/unpickling of result objects while preserving their semantic `str` subclasses (#99, thanks @q-rosiebloxsom!)
+
 ### **1.0.1** (September 23, 2025)
 
 ### Features
