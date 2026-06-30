@@ -12,6 +12,9 @@ class EntityRef(str):
         instance.entity_name = str(entity_name)
         return instance
 
+    def __getnewargs__(self):
+        return (self.entity_name,)
+
 
 class AttributeRef(str):
     """Node/edge attribute reference, e.g. A.age.
@@ -25,6 +28,9 @@ class AttributeRef(str):
         instance.attribute = str(attribute)
         return instance
 
+    def __getnewargs__(self):
+        return (self.entity_name, self.attribute)
+
 
 class IDRef(str):
     """Reference to ID(A) in WHERE clauses.
@@ -36,3 +42,6 @@ class IDRef(str):
         instance = super().__new__(cls, f"ID({entity_name})")
         instance.entity_name = str(entity_name)
         return instance
+
+    def __getnewargs__(self):
+        return (self.entity_name,)
