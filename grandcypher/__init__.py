@@ -26,7 +26,7 @@ from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
     AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
-from .types import Expression, EntityRef, AttributeRef, IDRef
+from .types import ExpressionBase, EntityRef, AttributeRef, IDRef
 
 
 _GrandCypherGrammar = Lark(
@@ -270,7 +270,7 @@ def _strip(value):
     return value.strip()
 
 
-class ArithmeticExpression:
+class ArithmeticExpression(ExpressionBase):
     def __init__(self, left, op: str, right):
         self.left = left
         self.op = op
@@ -288,7 +288,7 @@ class ArithmeticExpression:
         return f"({self.left} {self.op} {self.right})"
 
 
-class ScalarFunctionExpression:
+class ScalarFunctionExpression(ExpressionBase):
     def __init__(self, name, argument, function):
         self.name = name
         self.argument = argument
@@ -303,7 +303,7 @@ class ScalarFunctionExpression:
         return f"{self.name}({argument})"
 
 
-class CoalesceExpression:
+class CoalesceExpression(ExpressionBase):
     def __init__(self, arguments):
         self.arguments = arguments
 
@@ -318,7 +318,7 @@ class CoalesceExpression:
         return f"coalesce({', '.join(_format_expression(arg) for arg in self.arguments)})"
 
 
-class TypeExpression:
+class TypeExpression(ExpressionBase):
     def __init__(self, argument):
         self.argument = argument
 
@@ -339,19 +339,19 @@ class TypeExpression:
 
 
 def _evaluate_expression(value, match, host, return_edges, scope=None):
-    if isinstance(value, Expression):
+    if isinstance(value, ExpressionBase):
         return value.evaluate(match, host, return_edges, scope)
     return value
 
 
 def _format_expression(value):
-    if isinstance(value, str) and not isinstance(value, Expression):
+    if isinstance(value, str) and not isinstance(value, ExpressionBase):
         return f'"{value}"'
     return str(value)
 
 
 def _resolve_operand(operand, match, host, return_edges):
-    if isinstance(operand, Expression):
+    if isinstance(operand, ExpressionBase):
         return operand.evaluate(match, host, return_edges)
     return operand
 
@@ -984,7 +984,7 @@ class GrandCypherExecutor:
         processed_paths = set()  # Keep track of processed paths
 
         for data_path in data_paths:
-            if isinstance(data_path, Expression) and not isinstance(
+            if isinstance(data_path, ExpressionBase) and not isinstance(
                 data_path, (EntityRef, AttributeRef, IDRef)
             ):
                 result[str(data_path)] = [
@@ -1614,7 +1614,7 @@ class GrandCypherTransformer(Transformer):
                     self._executors[-1]._aggregation_attributes.add(entity)
                     self._executors[-1]._aggregate_functions.append((func, entity))
                 else:
-                    if isinstance(item, Expression) and not isinstance(
+                    if isinstance(item, ExpressionBase) and not isinstance(
                         item, (EntityRef, AttributeRef, IDRef)
                     ):
                         request = str(item)
@@ -1888,7 +1888,7 @@ class GrandCypherTransformer(Transformer):
 
     def size_function(self, items):
         expression = ScalarFunctionExpression("size", items[0], len)
-        if isinstance(items[0], str) and not isinstance(items[0], Expression):
+        if isinstance(items[0], str) and not isinstance(items[0], ExpressionBase):
             expression.argument_display = _format_expression(items[0])
         return expression
 

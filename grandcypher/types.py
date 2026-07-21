@@ -11,7 +11,11 @@ class Expression(Protocol):
         ...
 
 
-class EntityRef(str):
+class ExpressionBase:
+    """Marker base for efficient runtime expression dispatch."""
+
+
+class EntityRef(str, ExpressionBase):
     """Bare node/edge reference, e.g. A.
 
     str subclass because the RETURN path uses these as dict keys
@@ -32,7 +36,7 @@ class EntityRef(str):
         )
 
 
-class AttributeRef(str):
+class AttributeRef(str, ExpressionBase):
     """Node/edge attribute reference, e.g. A.age.
 
     str subclass because the RETURN path uses these as dict keys
@@ -62,7 +66,7 @@ class AttributeRef(str):
         raise IndexError(f"Entity {self} not in graph.")
 
 
-class IDRef(str):
+class IDRef(str, ExpressionBase):
     """Reference to ID(A) in WHERE clauses.
 
     str subclass because the RETURN path uses these as dict keys
