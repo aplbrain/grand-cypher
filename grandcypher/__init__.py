@@ -96,14 +96,27 @@ op_list             : "in"i -> op_in
 
 
 return_clause       : "return"i distinct_return? return_item ("," return_item)*
-return_item         : (entity_id | aggregation_function | scalar_function | entity_id "." attribute_id) ( "AS"i alias )?
+return_item         : (entity_id | aggregation_function | scalar_function) ( "AS"i alias )?
 alias               : CNAME
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
 
-scalar_function      : "id"i "(" entity_id ")" -> id_function
+?scalar_function     : "id"i "(" entity_id ")" -> id_function
+                    | "toLower"i "(" expression_argument ")" -> tolower_function
+                    | "toUpper"i "(" expression_argument ")" -> toupper_function
+                    | "trim"i "(" expression_argument ")" -> trim_function
+                    | "coalesce"i "(" expression_argument ("," expression_argument)+ ")" -> coalesce_function
+                    | "size"i "(" expression_argument ")" -> size_function
+                    | "type"i "(" entity_id ")" -> type_function
+
+?expression_argument : scalar_function
+                     | entity_id
+                     | value
+                     | NULL -> null
+                     | TRUE -> true
+                     | FALSE -> false
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -245,6 +258,18 @@ _ARITH_OPS = {
 }
 
 
+def _lower(value):
+    return value.lower()
+
+
+def _upper(value):
+    return value.upper()
+
+
+def _strip(value):
+    return value.strip()
+
+
 class ArithmeticExpression:
     def __init__(self, left, op: str, right):
         self.left = left
@@ -261,6 +286,68 @@ class ArithmeticExpression:
 
     def __str__(self):
         return f"({self.left} {self.op} {self.right})"
+
+
+class ScalarFunctionExpression:
+    def __init__(self, name, argument, function):
+        self.name = name
+        self.argument = argument
+        self.function = function
+
+    def evaluate(self, match, host, return_edges, scope=None):
+        value = _evaluate_expression(self.argument, match, host, return_edges, scope)
+        return self.function(value) if value is not None else None
+
+    def __str__(self):
+        argument = getattr(self, "argument_display", self.argument)
+        return f"{self.name}({argument})"
+
+
+class CoalesceExpression:
+    def __init__(self, arguments):
+        self.arguments = arguments
+
+    def evaluate(self, match, host, return_edges, scope=None):
+        for argument in self.arguments:
+            value = _evaluate_expression(argument, match, host, return_edges, scope)
+            if value is not None:
+                return value
+        return None
+
+    def __str__(self):
+        return f"coalesce({', '.join(_format_expression(arg) for arg in self.arguments)})"
+
+
+class TypeExpression:
+    def __init__(self, argument):
+        self.argument = argument
+
+    def evaluate(self, match, host, return_edges, scope=None):
+        if self.argument not in return_edges:
+            return None
+        motif_edge = return_edges[self.argument]
+        edge_path = match.mth.edge(*motif_edge)
+        if not edge_path.edges:
+            return None
+        edge = edge_path.edges[-1]
+        edge_id = (edge.u, edge.v, edge.k) if host.is_multigraph() else (edge.u, edge.v)
+        labels = host.edges[edge_id].get("__labels__", set())
+        return next(iter(labels), None) if isinstance(labels, set) else labels
+
+    def __str__(self):
+        return f"type({self.argument})"
+
+
+def _evaluate_expression(value, match, host, return_edges, scope=None):
+    if isinstance(value, Expression):
+        return value.evaluate(match, host, return_edges, scope)
+    return value
+
+
+def _format_expression(value):
+    if isinstance(value, str) and not isinstance(value, Expression):
+        return f'"{value}"'
+    return str(value)
 
 
 def _resolve_operand(operand, match, host, return_edges):
@@ -896,8 +983,22 @@ class GrandCypherExecutor:
         result = {}
         processed_paths = set()  # Keep track of processed paths
 
+        for data_path in data_paths:
+            if isinstance(data_path, Expression) and not isinstance(
+                data_path, (EntityRef, AttributeRef, IDRef)
+            ):
+                result[str(data_path)] = [
+                    data_path.evaluate(
+                        match, self._target_graph, self._return_edges
+                    )
+                    for match in true_matches
+                ][offset_limit]
+                processed_paths.add(data_path)
+
         # handling RETURN ID(A)
         for data_path in data_paths:
+            if data_path in processed_paths:
+                continue
             if isinstance(data_path, IDRef):
                 original_entity = data_path.entity_name
                 if original_entity in motif_nodes:
@@ -1074,7 +1175,7 @@ class GrandCypherExecutor:
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
-        self._return_requests = [
+        return_requests = [
             r if isinstance(r, (EntityRef, AttributeRef, IDRef)) else str(r)
             for r in self._return_requests
         ]
@@ -1083,8 +1184,8 @@ class GrandCypherExecutor:
         results = {
             self._entity2alias.get(key, key): values
             for key, values in results.items()
-            if key in self._return_requests
-            or self._alias2entity.get(key, key) in self._return_requests
+            if key in return_requests
+            or self._alias2entity.get(key, key) in return_requests
         }
 
         # HACK: convert to [None] if edge is None
@@ -1513,6 +1614,15 @@ class GrandCypherTransformer(Transformer):
                     self._executors[-1]._aggregation_attributes.add(entity)
                     self._executors[-1]._aggregate_functions.append((func, entity))
                 else:
+                    if isinstance(item, Expression) and not isinstance(
+                        item, (EntityRef, AttributeRef, IDRef)
+                    ):
+                        request = str(item)
+                        self._executors[-1]._original_return_requests.add(request)
+                        if alias:
+                            self._executors[-1]._entity2alias[request] = alias
+                        self._executors[-1]._return_requests.append(item)
+                        continue
                     if not isinstance(item, str):
                         item = str(item.value)
                     self._executors[-1]._original_return_requests.add(item)
@@ -1763,6 +1873,27 @@ class GrandCypherTransformer(Transformer):
         # self._return_requests.append(entity_name)
         # Return a special identifier that will be processed in _lookup method
         return IDRef(entity_name)
+
+    def tolower_function(self, items):
+        return ScalarFunctionExpression("toLower", items[0], _lower)
+
+    def toupper_function(self, items):
+        return ScalarFunctionExpression("toUpper", items[0], _upper)
+
+    def trim_function(self, items):
+        return ScalarFunctionExpression("trim", items[0], _strip)
+
+    def coalesce_function(self, items):
+        return CoalesceExpression(items)
+
+    def size_function(self, items):
+        expression = ScalarFunctionExpression("size", items[0], len)
+        if isinstance(items[0], str) and not isinstance(items[0], Expression):
+            expression.argument_display = _format_expression(items[0])
+        return expression
+
+    def type_function(self, items):
+        return TypeExpression(items[0])
 
     def value_list(self, items):
         return list(items)
