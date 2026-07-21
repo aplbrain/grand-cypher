@@ -26,7 +26,7 @@ from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
     AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
-from .types import EntityRef, AttributeRef, IDRef
+from .types import Expression, EntityRef, AttributeRef, IDRef
 
 
 _GrandCypherGrammar = Lark(
@@ -251,7 +251,7 @@ class ArithmeticExpression:
         self.op = op
         self.right = right
 
-    def resolve(self, match, host, return_edges):
+    def evaluate(self, match, host, return_edges, scope=None):
         left_val = _resolve_operand(self.left, match, host, return_edges)
         right_val = _resolve_operand(self.right, match, host, return_edges)
         try:
@@ -264,28 +264,8 @@ class ArithmeticExpression:
 
 
 def _resolve_operand(operand, match, host, return_edges):
-    if isinstance(operand, ArithmeticExpression):
-        return operand.resolve(match, host, return_edges)
-    if isinstance(operand, IDRef):
-        if operand.entity_name in match.node_mappings:
-            return match.node_mappings[operand.entity_name]
-        raise IndexError(f"Entity {operand.entity_name} not in match.")
-    if isinstance(operand, AttributeRef):
-        entity_name = operand.entity_name
-        attribute = operand.attribute
-        if entity_name in match.node_mappings:
-            host_node_id = match.node_mappings[entity_name]
-            return get_node_from_host(host, host_node_id, attribute)
-        if entity_name in return_edges:
-            edge_mapping = return_edges[entity_name]
-            host_edges = match.mth.edge(*edge_mapping).edges
-            return get_edge_from_host(host, host_edges, attribute)
-        raise IndexError(f"Entity {operand} not in graph.")
-    if isinstance(operand, EntityRef):
-        raise TypeError(
-            f"Cannot use bare entity '{operand}' in a comparison. "
-            f"Use a property like '{operand}.attribute' or ID({operand})."
-        )
+    if isinstance(operand, Expression):
+        return operand.evaluate(match, host, return_edges)
     return operand
 
 
