@@ -923,9 +923,7 @@ class GrandCypherExecutor:
                 if original_entity in motif_nodes:
                     ret = [match.mth.node(original_entity) for match in true_matches]
                     result[data_path] = ret[offset_limit]
-                    result[original_entity] = ret[offset_limit]
                     processed_paths.add(data_path)
-                    processed_paths.add(original_entity)
                     continue
             else:
                 entity_name, _ = _data_path_to_entity_name_attribute(data_path)
