@@ -2556,6 +2556,30 @@ class TestReturnFullNodeAttributes:
         # B.name should be just the attribute value
         assert result["B.name"][0] == "node_y"
 
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_return_bare_node_and_id_together(self, graph_type):
+        """RETURN of a bare node alongside ID(node) should not clobber the node.
+
+        Regression test for issue #101: the ID() handler used to store its
+        result under both "ID(a)" and the bare "a" key (and mark "a" as
+        processed), so `RETURN a, ID(a)` returned the node id string for `a`
+        instead of the node's attribute dictionary.
+        """
+        host = graph_type()
+        host.add_node("alice", name="Alice", age=30)
+        host.add_node("bob", name="Bob", age=25)
+        host.add_edge("alice", "bob", relationship="knows")
+
+        # Bare node first, then ID()
+        result = GrandCypher(host).run("MATCH (a)-[]->(b) RETURN a, ID(a)")
+        assert result["a"] == [{"name": "Alice", "age": 30}]
+        assert result["ID(a)"] == ["alice"]
+
+        # ID() first, then bare node — ordering must not matter
+        result = GrandCypher(host).run("MATCH (a)-[]->(b) RETURN ID(a), a")
+        assert result["a"] == [{"name": "Alice", "age": 30}]
+        assert result["ID(a)"] == ["alice"]
+
 
 def test_generate_multiedge_edge_hop_key():
     edge_hop_map = {("A", "C"): ("A", "B", "C"), ("D", "E"): ("D", "D"), ("F", "G"): ("F", "G")}
