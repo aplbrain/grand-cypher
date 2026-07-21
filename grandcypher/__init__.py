@@ -66,6 +66,7 @@ condition           : arith_expr op arith_expr
 
 ?arith_atom         : entity_id
                     | scalar_function
+                    | scope_function
                     | value
                     | NULL -> null
                     | TRUE -> true
@@ -104,6 +105,7 @@ AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
 attribute_id         : CNAME
 
 scalar_function      : "id"i "(" entity_id ")" -> id_function
+scope_function       : CNAME "(" (value | scope_function)* ("," (value | scope_function))*  ")"
 
 distinct_return     : "DISTINCT"i
 limit_clause        : "limit"i NUMBER
@@ -897,7 +899,7 @@ class GrandCypherExecutor:
     def create_node_indices(self, node_attribute_keys: list[str]):
         self._node_indexer.create_indices(node_attribute_keys)
 
-    def set_hints(self, hints=None):
+    def set_hints(self, hints=None) -> "GrandCypherExecutor":
         self._hints = hints
         return self
 
@@ -1511,11 +1513,17 @@ class GrandCypherExecutor:
 
 
 class GrandCypherTransformer(Transformer):
-    def __init__(self, target_graph: nx.Graph, limit: Optional[int] = None):
+    def __init__(
+        self,
+        target_graph: nx.Graph,
+        limit: Optional[int] = None,
+        scope_functions: Optional[Dict[str, Callable]] = None,
+    ):
         self._limit = limit
         self._target_graph = target_graph
         self._executors = [GrandCypherExecutor(target_graph, limit)]
         self._match_clause_count = 0
+        self._scope_functions = scope_functions or {}
 
     def return_clause(self, clause):
         # collect all entity identifiers to be returned
@@ -1770,6 +1778,13 @@ class GrandCypherTransformer(Transformer):
     def condition_not(self, processed_condition):
         return (not processed_condition[0][0], *processed_condition[0][1:])
 
+    def scope_function(self, val):
+        """Execute a registered function while transforming a WHERE expression."""
+        name = str(val[0])
+        if name not in self._scope_functions:
+            raise KeyError(f"function {name} not found in scope functions")
+        return self._scope_functions[name](*val[1:])
+
     null = lambda self, _: None
     true = lambda self, _: True
     false = lambda self, _: False
@@ -1866,7 +1881,7 @@ class GrandCypher:
 
     """
 
-    def __init__(self, host_graph: nx.Graph, limit: int = None) -> None:
+    def __init__(self, host_graph: nx.Graph, limit: int = None, scope_functions: Optional[dict] = None) -> None:
         """
         Create a new GrandCypher object to query graphs with Cypher.
 
@@ -1879,7 +1894,9 @@ class GrandCypher:
 
         """
 
-        self._transformer = GrandCypherTransformer(host_graph, limit)
+        self._transformer = GrandCypherTransformer(
+            host_graph, limit, scope_functions=scope_functions
+        )
         self._host_graph = host_graph
 
     @property

@@ -1,5 +1,7 @@
+from datetime import date
 import networkx as nx
 from grandcypher.struct import EdgeHopKey, EdgeWithKey, HopSpec
+from lark.exceptions import VisitError
 import pytest
 
 from . import GrandCypher, find_multiedge_keys, generate_multiedge_edge_hop_key, get_edge_from_host
@@ -3134,3 +3136,77 @@ class TestArithmeticExpressions:
 
         res = GrandCypher(host).run("MATCH (A) WHERE ID(A) < 3 RETURN A.name")
         assert res["A.name"] == ["Alice", "Bob"]
+
+
+class TestWhereScopeFunction:
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_single_function(self, graph_type):
+        host = graph_type()
+        host.add_node(1, d=date(2025, 10, 31))
+        host.add_node(2, d=date(2025, 11, 30))
+        host.add_node(3, d=date(2025, 12, 31))
+
+        qry = """
+        MATCH (A)
+        WHERE A.d < date(2025, 12, 1)
+        RETURN ID(A)
+        """
+
+        res = GrandCypher(host, scope_functions={"date": date}).run(qry)
+        assert res["ID(A)"] == [1, 2]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_nested_functions(self, graph_type):
+        host = graph_type()
+        host.add_node(1, d=date(2025, 10, 31))
+        host.add_node(2, d=date(2025, 11, 30))
+        host.add_node(3, d=date(2025, 12, 31))
+
+        qry = """
+        MATCH (A)
+        WHERE A.d < date(int("2025"), add(5, 7), 1)
+        RETURN ID(A)
+        """
+
+        functions = {"date": date, "int": int, "add": lambda a, b: a + b}
+        res = GrandCypher(host, scope_functions=functions).run(qry)
+        assert res["ID(A)"] == [1, 2]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_string_value_is_not_executed(self, graph_type):
+        host = graph_type()
+        host.add_node(1, d='date(int("2025"), add(5, 7), 1)')
+        host.add_node(2, d='date(int("2025"), add(5, 7), 2)')
+        host.add_node(3, d='date(int("2025"), add(5, 7), 3)')
+
+        qry = """
+        MATCH (A)
+        WHERE A.d < "date(int(\\"2025\\"), add(5, 7), 2)"
+        RETURN ID(A)
+        """
+
+        res = GrandCypher(host).run(qry)
+        assert res["ID(A)"] == [1]
+
+    @pytest.mark.parametrize("graph_type", ACCEPTED_GRAPH_TYPES)
+    def test_function_composes_with_arithmetic(self, graph_type):
+        host = graph_type()
+        host.add_nodes_from([(1, {"value": 4}), (2, {"value": 6})])
+
+        res = GrandCypher(host, scope_functions={"base": lambda: 3}).run(
+            "MATCH (A) WHERE A.value > base() + 1 RETURN ID(A)"
+        )
+
+        assert res["ID(A)"] == [2]
+
+    def test_unknown_function(self):
+        host = nx.DiGraph()
+        host.add_node(1, value=1)
+
+        with pytest.raises(VisitError) as exc_info:
+            GrandCypher(host).run(
+                "MATCH (A) WHERE A.value == missing() RETURN ID(A)"
+            )
+
+        assert isinstance(exc_info.value.orig_exc, KeyError)
+        assert "function missing not found" in str(exc_info.value.orig_exc)
