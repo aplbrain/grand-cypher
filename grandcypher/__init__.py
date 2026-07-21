@@ -26,6 +26,7 @@ from .indexer import (
     Compare as IndexerCompare, OR as IndexerOr,
     AND as IndexerAnd, ArrayAttributeIndexer, IndexerConditionAST,
     UnsupportedOp as IndexerUnsupportedOp, IndexerConditionRunner)
+from .types import EntityRef, AttributeRef, IDRef
 
 
 _GrandCypherGrammar = Lark(
@@ -49,17 +50,28 @@ compound_condition  : condition
                     | "(" compound_condition boolean_arithmetic compound_condition ")"
                     | compound_condition boolean_arithmetic compound_condition
 
-condition           : (entity_id | scalar_function | list_predicate_function) op entity_id_or_value
-                    | (entity_id | scalar_function | list_predicate_function) op_list value_list
+condition           : arith_expr op arith_expr
+                    | (entity_id | scalar_function) op_list value_list  // IN: no arithmetic on LHS by design
                     | list_predicate_function
                     | sub_query
                     | "not"i condition -> condition_not
 
-?entity_id_or_value : entity_id
+?arith_expr         : arith_term
+                    | arith_expr "+" arith_term -> arith_add
+                    | arith_expr "-" arith_term -> arith_sub
+
+?arith_term         : arith_atom
+                    | arith_term "*" arith_atom -> arith_mul
+                    | arith_term "/" arith_atom -> arith_div
+                    | arith_term "%" arith_atom -> arith_mod
+
+?arith_atom         : entity_id
+                    | scalar_function
                     | value
                     | NULL -> null
                     | TRUE -> true
                     | FALSE -> false
+                    | "(" arith_expr ")"
 
 op                  : "==" -> op_eq
                     | "=" -> op_eq
@@ -250,6 +262,65 @@ class SUBOP_EXIST(SUBOP):
 _SUB_OPERATORS = {
     "EXISTS": SUBOP_EXIST
 }
+
+
+_ARITH_OPS = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+    # Truncate-toward-zero integer division to match Neo4j/Cypher semantics
+    "/": lambda a, b: int(a / b) if isinstance(a, int) and isinstance(b, int) else a / b,
+    "%": lambda a, b: a % b,
+}
+
+
+class ArithmeticExpression:
+    def __init__(self, left, op: str, right):
+        self.left = left
+        self.op = op
+        self.right = right
+
+    def resolve(self, match, host, return_edges, scope=None):
+        left_val = _resolve_operand(self.left, match, host, return_edges, scope)
+        right_val = _resolve_operand(self.right, match, host, return_edges, scope)
+        try:
+            return _ARITH_OPS[self.op](left_val, right_val)
+        except (TypeError, ZeroDivisionError, OverflowError):
+            return None
+
+    def __str__(self):
+        return f"({self.left} {self.op} {self.right})"
+
+
+def _resolve_operand(operand, match, host, return_edges, scope=None):
+    if isinstance(operand, ArithmeticExpression):
+        return operand.resolve(match, host, return_edges, scope)
+    if isinstance(operand, ScalarFunction):
+        return operand(match, host, return_edges, scope)
+    if isinstance(operand, IDRef):
+        if operand.entity_name in match.node_mappings:
+            return match.node_mappings[operand.entity_name]
+        raise IndexError(f"Entity {operand.entity_name} not in match.")
+    if isinstance(operand, AttributeRef):
+        entity_name = operand.entity_name
+        attribute = operand.attribute
+        if scope and entity_name in scope:
+            value = scope[entity_name]
+            return value.get(attribute) if isinstance(value, dict) else None
+        if entity_name in match.node_mappings:
+            host_node_id = match.node_mappings[entity_name]
+            return get_node_from_host(host, host_node_id, attribute)
+        if entity_name in return_edges:
+            edge_mapping = return_edges[entity_name]
+            host_edges = match.mth.edge(*edge_mapping).edges
+            return get_edge_from_host(host, host_edges, attribute)
+        raise IndexError(f"Entity {operand} not in graph.")
+    if isinstance(operand, EntityRef):
+        raise TypeError(
+            f"Cannot use bare entity '{operand}' in a comparison. "
+            f"Use a property like '{operand}.attribute' or ID({operand})."
+        )
+    return operand
 
 
 @lru_cache()
@@ -987,63 +1058,25 @@ class LambdaCompareCondition(CompareCondition):
 
 class CompoundCondition(Condition):
     """compound condition"""
-    def __init__(self, should_be: bool, entity_id, operator, value):
-        """
-        Initialize CompoundCondition.
-
-        Args:
-            should_be: Boolean expectation for the condition
-            entity_id: Either a ScalarFunction or string entity reference (e.g., "n.name")
-            operator: Comparison operator
-            value: Value to compare against
-        """
+    def __init__(self, should_be: bool, left, operator, right):
         self._should_be = should_be
+        self._left = left
         self._operator = operator
-        self._value = value
-
-        # Wrap entity references in EntityAttributeGetter at init time
-        if isinstance(entity_id, ScalarFunction):
-            self._entity_id = entity_id
-        else:
-            # Store both the original string and the getter
-            self._entity_id_str = entity_id
-            self._entity_id = EntityAttributeGetter(entity_id)
+        self._right = right
 
     def __str__(self):
-        entity_repr = self._entity_id_str if hasattr(self, '_entity_id_str') else str(self._entity_id)
-        return f"compound of {self._operator} for key {entity_repr}: value {self._value}"
+        return f"compound of {self._operator} for {self._left}: {self._right}"
 
-    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope: dict = None) -> bool:
-        # Handle scalar functions (ID, SIZE, etc.)
-        if isinstance(self._entity_id, ScalarFunction):
-            # Evaluate scalar function to get value
-            scalar_value = self._entity_id(match, host, return_edges, scope)
-
-            # Apply comparison operator
-            val = self._operator(scalar_value, self._value)
-            operator_results = [val]
-
-            if val is None:
-                val = False
-            if val != self._should_be:
-                return False, operator_results
-            return True, operator_results
-
-        # Handle SUBOP operators (special case - don't need entity resolution)
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope=None) -> bool:
         if isinstance(self._operator, SUBOP):
-            val = self._operator(match.node_mappings, self._value)
-            operator_results = [val]
-            if val is None:
+            val = self._operator(match.node_mappings, self._right)
+        else:
+            left = _resolve_operand(self._left, match, host, return_edges, scope)
+            right = _resolve_operand(self._right, match, host, return_edges, scope)
+            try:
+                val = self._operator(left, right)
+            except (TypeError, AttributeError):
                 val = False
-            if val != self._should_be:
-                return False, operator_results
-            return True, operator_results
-
-        # Use EntityAttributeGetter for all entity references (handles scope, nodes, edges)
-        entity_value = self._entity_id.evaluate(match, host, return_edges, scope)
-
-        # Apply comparison operator
-        val = self._operator(entity_value, self._value)
         operator_results = [val]
 
         if val is None:
@@ -1578,21 +1611,20 @@ _BOOL_ARI = {
 
 
 def _data_path_to_entity_name_attribute(data_path):
-    """
-    Parse data path into entity name and attribute using EntityAttributeGetter.
-
-    Args:
-        data_path: String path (e.g., "n.name", "n") or Token containing the path
-
-    Returns:
-        tuple: (entity_name, entity_attribute)
-    """
+    if isinstance(data_path, IDRef):
+        return data_path.entity_name, None
+    if isinstance(data_path, AttributeRef):
+        return data_path.entity_name, data_path.attribute
+    if isinstance(data_path, EntityRef):
+        return data_path.entity_name, None
     if isinstance(data_path, Token):
         data_path = data_path.value
-
-    # Use EntityAttributeGetter to parse the path
-    getter = EntityAttributeGetter(data_path)
-    return getter.entity, getter.attribute
+    if "." in data_path:
+        entity_name, entity_attribute = data_path.split(".", 1)
+    else:
+        entity_name = data_path
+        entity_attribute = None
+    return entity_name, entity_attribute
 
 
 # this is to convert WHERE OPERATOR to INDEXER OPERATOR
@@ -1625,46 +1657,40 @@ def create_node_indexer(target_graph: nx.DiGraph) -> ArrayAttributeIndexer:
     return indexer
 
 
-def to_indexer_ast(condition: Condition, entity_id = None, value = None, should_be=True) -> IndexerConditionAST:
+def to_indexer_ast(condition: Condition, left = None, right = None, should_be=True) -> IndexerConditionAST:
     """convert where condition to IndexerConditionAST which can be run with IndexerConditionRunner"""
-    # for condition in condition:
     if isinstance(condition, CompoundCondition):
         return to_indexer_ast(condition=condition._operator,
-                                entity_id=condition._entity_id,
-                                value=condition._value,
+                                left=condition._left,
+                                right=condition._right,
                                 should_be=condition._should_be)
     if (isinstance(condition, LambdaCompareCondition) and
-        condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS):
-        # Handle scalar functions
-        if isinstance(entity_id, ID):
-            # ID() can be optimized - extract entity name
-            entity_id = entity_id._entity_name
-        elif isinstance(entity_id, EntityAttributeGetter):
-            # EntityAttributeGetter can be optimized - extract full expression
-            if entity_id.attribute:
-                entity_id = f"{entity_id.entity}.{entity_id.attribute}"
-            else:
-                entity_id = entity_id.entity
-        elif not isinstance(entity_id, str):
-            # Other scalar functions can't be optimized by indexer
-            return IndexerUnsupportedOp(condition, entity_id, value)
+        condition._operator in WHERE_OPERATORS_TO_INDEXER_OPERATORS and
+        isinstance(left, AttributeRef) and
+        isinstance(right, (int, float, str, bool, type(None)))):
         operator = condition._operator
         if should_be is True:
             operator = WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
         else:
             operator = NOT_WHERE_OPERATORS_TO_INDEXER_OPERATORS[operator]
-        return IndexerCompare(operator, entity_id, value)
+        return IndexerCompare(operator, left, right)
+    if (isinstance(condition, LambdaCompareCondition) and
+        condition._operator == "==" and
+        should_be is True and
+        isinstance(left, IDRef) and
+        isinstance(right, (int, float, str, bool))):
+        return IndexerCompare("==", left, right)
     if isinstance(condition, OR):
         return IndexerOr(
-            to_indexer_ast(condition._condition_a, entity_id, value),
-            to_indexer_ast(condition._condition_b, entity_id, value),
+            to_indexer_ast(condition._condition_a, left, right),
+            to_indexer_ast(condition._condition_b, left, right),
         )
     if isinstance(condition, AND):
         return IndexerAnd(
-            to_indexer_ast(condition._condition_a, entity_id, value),
-            to_indexer_ast(condition._condition_b, entity_id, value),
+            to_indexer_ast(condition._condition_a, left, right),
+            to_indexer_ast(condition._condition_b, left, right),
         )
-    return IndexerUnsupportedOp(condition, entity_id, value)
+    return IndexerUnsupportedOp(condition, left, right)
 
 
 def motif_to_indexer_ast(motif: nx.DiGraph) -> IndexerConditionAST:
@@ -1674,7 +1700,7 @@ def motif_to_indexer_ast(motif: nx.DiGraph) -> IndexerConditionAST:
         for k, v in json_data.items():
             if k == "__labels__":
                 continue
-            k = cname + "." + k
+            k = AttributeRef(cname, k)
             if ast is None:
                 ast = IndexerCompare("==", k, v)
             else:
@@ -1769,10 +1795,16 @@ class GrandCypherExecutor:
                 processed_paths.add(str(data_path))
                 continue
 
-        # Validate entity names for non-scalar-function data paths
+        # Handle ID references and validate all remaining data paths.
         for data_path in data_paths:
             if isinstance(data_path, ScalarFunction):
-                continue  # Skip scalar functions, already processed
+                continue
+            if isinstance(data_path, IDRef):
+                if data_path.entity_name in motif_nodes:
+                    ret = [match.mth.node(data_path.entity_name) for match in true_matches]
+                    result[data_path] = ret[offset_limit]
+                    processed_paths.add(data_path)
+                continue
 
             entity_name, _ = _data_path_to_entity_name_attribute(data_path)
             if (
@@ -1795,7 +1827,7 @@ class GrandCypherExecutor:
                 # Use EntityAttributeGetter for consistent entity access
                 # If entity_attribute exists: returns specific attribute value
                 # If entity_attribute is None: returns full node dictionary
-                getter = EntityAttributeGetter(data_path)
+                getter = EntityAttributeGetter(str(data_path))
                 ret = (
                     getter.evaluate(match, self._target_graph, self._return_edges)
                     for match in true_matches
@@ -1942,16 +1974,17 @@ class GrandCypherExecutor:
 
         # Only after all other transformations, apply pagination
         results = self._apply_pagination(results, ignore_limit)
-        # Convert all return_requests to strings (including scalar functions) for key matching
-        # Use a local variable to avoid modifying self._return_requests (breaks reusability)
-        return_requests_str = [str(item) for item in self._return_requests]
+        return_requests = [
+            r if isinstance(r, (EntityRef, AttributeRef, IDRef)) else str(r)
+            for r in self._return_requests
+        ]
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
             self._entity2alias.get(key, key): values
             for key, values in results.items()
-            if key in return_requests_str
-            or self._alias2entity.get(key, key) in return_requests_str
+            if key in return_requests
+            or self._alias2entity.get(key, key) in return_requests
         }
 
         # TODO: remove this hack
@@ -2518,8 +2551,8 @@ class GrandCypherTransformer(Transformer):
 
     def entity_id(self, entity_id):
         if len(entity_id) == 2:
-            return ".".join(entity_id)
-        return entity_id.value
+            return AttributeRef(entity_id[0], entity_id[1])
+        return EntityRef(entity_id[0].value)
 
     def edge_match(self, edge_tokens):
         def flatten_tokens(edge_tokens):
@@ -2687,8 +2720,7 @@ class GrandCypherTransformer(Transformer):
 
     def id_function(self, entity_id):
         entity_name = entity_id[0].value
-        # Return ID object (class-based, not string-based)
-        return ID(entity_name)
+        return IDRef(entity_name)
 
     def tolower_function(self, items):
         """
@@ -2956,6 +2988,21 @@ class GrandCypherTransformer(Transformer):
 
     def op(self, operator):
         return operator
+
+    def arith_add(self, items):
+        return ArithmeticExpression(items[0], "+", items[1])
+
+    def arith_sub(self, items):
+        return ArithmeticExpression(items[0], "-", items[1])
+
+    def arith_mul(self, items):
+        return ArithmeticExpression(items[0], "*", items[1])
+
+    def arith_div(self, items):
+        return ArithmeticExpression(items[0], "/", items[1])
+
+    def arith_mod(self, items):
+        return ArithmeticExpression(items[0], "%", items[1])
 
     def op_eq(self, _):
         return _OPERATORS["=="]

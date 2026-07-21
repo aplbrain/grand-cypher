@@ -19,13 +19,13 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Cache virtual environment
+      - name: Cache uv
         uses: actions/cache@v3
         with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
           restore-keys: |
-            venv-${{ runner.os }}-
+            uv-${{ runner.os }}-
 
       - name: Set up uv venv and install dependencies
         run: |
