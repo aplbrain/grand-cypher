@@ -100,7 +100,7 @@ return_item         : (entity_id | aggregation_function | scalar_function) ( "AS
 alias               : CNAME
 
 aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
-AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN"
+AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN" | "COLLECT"
 attribute_id         : CNAME
 
 ?scalar_function     : "id"i "(" entity_id ")" -> id_function
@@ -397,8 +397,15 @@ class Min(AggregationExpression):
         return min(value if value is not None else float("inf") for value in values)
 
 
+class Collect(AggregationExpression):
+    name = "COLLECT"
+
+    def aggregate(self, values):
+        return [value for value in values if value is not None]
+
+
 _AGGREGATION_FUNCTIONS = {
-    function.name: function for function in (Count, Sum, Avg, Max, Min)
+    function.name: function for function in (Count, Sum, Avg, Max, Min, Collect)
 }
 
 
