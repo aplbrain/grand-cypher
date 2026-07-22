@@ -277,8 +277,8 @@ class ArithmeticExpression(ExpressionBase):
         self.right = right
 
     def evaluate(self, match, host, return_edges, scope=None):
-        left_val = _resolve_operand(self.left, match, host, return_edges)
-        right_val = _resolve_operand(self.right, match, host, return_edges)
+        left_val = _resolve_operand(self.left, match, host, return_edges, scope)
+        right_val = _resolve_operand(self.right, match, host, return_edges, scope)
         try:
             return _ARITH_OPS[self.op](left_val, right_val)
         except (TypeError, ZeroDivisionError, OverflowError):
@@ -421,9 +421,9 @@ def _format_expression(value):
     return str(value)
 
 
-def _resolve_operand(operand, match, host, return_edges):
+def _resolve_operand(operand, match, host, return_edges, scope=None):
     if isinstance(operand, ExpressionBase):
-        return operand.evaluate(match, host, return_edges)
+        return operand.evaluate(match, host, return_edges, scope)
     return operand
 
 
@@ -839,12 +839,12 @@ class CompoundCondition(Condition):
     def __str__(self):
         return f"compound of {self._operator} for {self._left}: {self._right}"
 
-    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list) -> bool:
+    def __call__(self, match: Match, host: nx.DiGraph, return_edges: list, scope=None) -> bool:
         if isinstance(self._operator, SUBOP):
             val = self._operator(match.node_mappings, self._right)
         else:
-            left = _resolve_operand(self._left, match, host, return_edges)
-            right = _resolve_operand(self._right, match, host, return_edges)
+            left = _resolve_operand(self._left, match, host, return_edges, scope)
+            right = _resolve_operand(self._right, match, host, return_edges, scope)
             try:
                 val = self._operator(left, right)
             except (TypeError, AttributeError):
