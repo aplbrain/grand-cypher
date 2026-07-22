@@ -1,4 +1,5 @@
 import networkx as nx
+import pytest
 
 from . import GrandCypher
 
@@ -110,3 +111,18 @@ def test_nested_expression_query_can_be_reused():
     expected = {"AVG(size(n.name))": [3]}
     assert grand_cypher.run(query) == expected
     assert grand_cypher.run(query) == expected
+
+
+@pytest.mark.benchmark
+def test_benchmark_nested_scalar_aggregation():
+    host = nx.DiGraph()
+    host.add_nodes_from(
+        (index, {"group": index % 20, "name": f"name-{index}"})
+        for index in range(500)
+    )
+
+    result = GrandCypher(host).run(
+        "MATCH (n) RETURN n.group, AVG(size(n.name))"
+    )
+
+    assert len(result["n.group"]) == 20

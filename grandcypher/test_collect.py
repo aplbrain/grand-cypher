@@ -1,4 +1,5 @@
 import networkx as nx
+import pytest
 
 from . import Collect, GrandCypher
 
@@ -83,3 +84,17 @@ def test_collect_query_can_be_reused():
     expected = {"COLLECT(n.value)": [[1, 2]]}
     assert grand_cypher.run(query) == expected
     assert grand_cypher.run(query) == expected
+
+
+@pytest.mark.benchmark
+def test_benchmark_grouped_collect():
+    host = nx.DiGraph()
+    host.add_nodes_from(
+        (index, {"group": index % 20, "value": index}) for index in range(500)
+    )
+
+    result = GrandCypher(host).run(
+        "MATCH (n) RETURN n.group, COLLECT(n.value)"
+    )
+
+    assert len(result["n.group"]) == 20

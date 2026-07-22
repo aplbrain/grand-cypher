@@ -1,6 +1,7 @@
 import pickle
 
 import networkx as nx
+import pytest
 
 from . import GrandCypher, _GrandCypherGrammar
 
@@ -20,6 +21,20 @@ def test_string_functions_in_return_and_where():
         "toLower(n.name)": ["  alice  "],
         "toUpper(trim(n.name))": ["ALICE"],
     }
+
+
+@pytest.mark.benchmark
+def test_benchmark_nested_scalar_filtering():
+    host = nx.DiGraph()
+    host.add_nodes_from(
+        (index, {"name": f"  USER-{index % 25}  "}) for index in range(250)
+    )
+
+    result = GrandCypher(host).run(
+        'MATCH (n) WHERE toLower(trim(n.name)) = "user-7" RETURN ID(n)'
+    )
+
+    assert len(result["ID(n)"]) == 10
 
 
 def test_coalesce_with_attributes_and_literals():
