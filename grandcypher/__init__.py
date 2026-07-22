@@ -338,6 +338,70 @@ class TypeExpression(ExpressionBase):
         return f"type({self.argument})"
 
 
+class AggregationExpression:
+    name = None
+
+    def __init__(self, argument):
+        self.argument = argument
+
+    def evaluate(self, results, group_keys):
+        grouped_data = {}
+        for i, value in enumerate(results[self.argument]):
+            group = tuple(results[key][i] for key in group_keys if key in results)
+            grouped_data.setdefault(group, []).append(value)
+
+        return {
+            group: self.aggregate(values) for group, values in grouped_data.items()
+        }
+
+    def aggregate(self, values):
+        raise NotImplementedError
+
+    def __str__(self):
+        return f"{self.name}({self.argument})"
+
+
+class Count(AggregationExpression):
+    name = "COUNT"
+
+    def aggregate(self, values):
+        return len(values)
+
+
+class Sum(AggregationExpression):
+    name = "SUM"
+
+    def aggregate(self, values):
+        return sum(value or 0 for value in values)
+
+
+class Avg(AggregationExpression):
+    name = "AVG"
+
+    def aggregate(self, values):
+        values = [value or 0 for value in values]
+        return sum(values) / len(values)
+
+
+class Max(AggregationExpression):
+    name = "MAX"
+
+    def aggregate(self, values):
+        return max(value if value is not None else -float("inf") for value in values)
+
+
+class Min(AggregationExpression):
+    name = "MIN"
+
+    def aggregate(self, values):
+        return min(value if value is not None else float("inf") for value in values)
+
+
+_AGGREGATION_FUNCTIONS = {
+    function.name: function for function in (Count, Sum, Avg, Max, Min)
+}
+
+
 def _evaluate_expression(value, match, host, return_edges, scope=None):
     if isinstance(value, ExpressionBase):
         return value.evaluate(match, host, return_edges, scope)
@@ -1079,54 +1143,8 @@ class GrandCypherExecutor:
             result[data_path] = list(ret)[offset_limit]
         return result
 
-    def _format_aggregation_key(self, func, entity):
-        return f"{func}({entity})"
-
-    def aggregate(self, func, results, entity, group_keys):
-        # Collect data based on group keys
-        grouped_data = {}
-        for i in range(len(results[entity])):
-            group_tuple = tuple(results[key][i] for key in group_keys if key in results)
-            if group_tuple not in grouped_data:
-                grouped_data[group_tuple] = []
-            grouped_data[group_tuple].append(results[entity][i])
-
-
-        def _collate_data(data, func):
-            # for ["COUNT", "SUM", "AVG"], we treat None as 0
-            if func in ["COUNT", "SUM", "AVG"]:
-                collated_data = [
-                    # label: [
-                    (v or 0)
-                    for v in data
-                ]
-            elif func in ["MAX", "MIN"]:
-                collated_data = [
-                    v
-                    for v in data
-                ]
-
-
-            return collated_data
-
-        # Apply aggregation function
-        aggregate_results = {}
-        for group, data in grouped_data.items():
-            collated_data = _collate_data(data, func)
-            if func == "COUNT":
-                aggregate_results[group] = len(collated_data)
-            elif func == "SUM":
-                aggregate_results[group] = sum(collated_data)
-            elif func == "AVG":
-                aggregate_results[group] = sum(collated_data) / len(collated_data)
-            elif func == "MAX":
-                aggregate_results[group] = max([(d if d is not None else -float("inf")) for d in collated_data])
-            elif func == "MIN":
-                aggregate_results[group] = min([(d if d is not None else float("inf")) for d in collated_data ])
-        # aggregate_results = [v for v in aggregate_results.values()]
-        return aggregate_results
-
     def returns(self, ignore_limit=False):
+        aggregation_result_keys = []
         data_paths = (
             self._return_requests
             + list(self._order_by_attributes)
@@ -1142,26 +1160,25 @@ class GrandCypherExecutor:
             group_keys = [
                 key
                 for key in results.keys()
-                if not any(key.endswith(func[1]) for func in self._aggregate_functions)
+                if not any(key.endswith(func.argument) for func in self._aggregate_functions)
             ]
 
             aggregated_results = {}
-            for func, entity in self._aggregate_functions:
-                aggregated_data = self.aggregate(func, results, entity, group_keys)
+            aggregation_keys = None
+            for func in self._aggregate_functions:
+                aggregated_data = func.evaluate(results, group_keys)
                 aggregated_values = list(aggregated_data.values())
-                aggregated_keys = list(aggregated_data.keys())
-                func_key = self._format_aggregation_key(func, entity)
+                current_keys = list(aggregated_data.keys())
+                if aggregation_keys is None:
+                    aggregation_keys = current_keys
+                elif current_keys != aggregation_keys:
+                    raise ValueError("Aggregation functions produced different groups")
+                func_key = str(func)
                 aggregated_results[func_key] = aggregated_values
-                self._return_requests.append(func_key)
-                # TODO: the group_keys is the same for all func
-                # let's have aggregated keys 1st
-                # then have aggregated values
-                # so we don't have to repeat the groups key population here
-                # for i in range(len(gro up_keys)):
-                #     results[group_keys[i]] = [k[i] for k in aggregated_keys]
+                aggregation_result_keys.append(func_key)
             results.update(aggregated_results)
             for i in range(len(group_keys)):
-                results[group_keys[i]] = [k[i] for k in aggregated_keys]
+                results[group_keys[i]] = [key[i] for key in aggregation_keys or []]
 
         # update the results with the given alias(es)
         results = {self._entity2alias.get(k, k): v for k, v in results.items()}
@@ -1178,7 +1195,7 @@ class GrandCypherExecutor:
         return_requests = [
             r if isinstance(r, (EntityRef, AttributeRef, IDRef)) else str(r)
             for r in self._return_requests
-        ]
+        ] + aggregation_result_keys
 
         # Only include keys that were asked for in `RETURN` in the final results
         results = {
@@ -1203,7 +1220,11 @@ class GrandCypherExecutor:
     def _apply_order_by(self, results):
         if self._order_by:
             sort_lists = [
-                (results[field], field, direction)
+                (
+                    results[self._entity2alias.get(field, field)],
+                    self._entity2alias.get(field, field),
+                    direction,
+                )
                 for field, direction in self._order_by
             ]
 
@@ -1606,13 +1627,11 @@ class GrandCypherTransformer(Transformer):
                 alias = self._extract_alias(item)
                 item = item.children[0] if isinstance(item, Tree) else item
                 if isinstance(item, Tree) and item.data == "aggregation_function":
-                    func, entity = self._parse_aggregation_token(item)
+                    func = self._parse_aggregation_token(item)
                     if alias:
-                        self._executors[-1]._entity2alias[
-                            self._executors[-1]._format_aggregation_key(func, entity)
-                        ] = alias
-                    self._executors[-1]._aggregation_attributes.add(entity)
-                    self._executors[-1]._aggregate_functions.append((func, entity))
+                        self._executors[-1]._entity2alias[str(func)] = alias
+                    self._executors[-1]._aggregation_attributes.add(func.argument)
+                    self._executors[-1]._aggregate_functions.append(func)
                 else:
                     if isinstance(item, ExpressionBase) and not isinstance(
                         item, (EntityRef, AttributeRef, IDRef)
@@ -1644,7 +1663,7 @@ class GrandCypherTransformer(Transformer):
         if len(item.children) > 2:
             entity += "." + str(item.children[2].children[0].value)
 
-        return func, entity
+        return _AGGREGATION_FUNCTIONS[func](entity)
 
     def _extract_alias(self, item: Tree):
         """
@@ -1677,9 +1696,9 @@ class GrandCypherTransformer(Transformer):
                 isinstance(item.children[0], Tree)
                 and item.children[0].data == "aggregation_function"
             ):
-                func, entity = self._parse_aggregation_token(item.children[0])
-                field = self._executors[-1]._format_aggregation_key(func, entity)
-                self._executors[-1]._order_by_attributes.add(entity)
+                func = self._parse_aggregation_token(item.children[0])
+                field = str(func)
+                self._executors[-1]._order_by_attributes.add(func.argument)
             else:
                 field = str(
                     item.children[0]
