@@ -52,6 +52,7 @@ compound_condition  : condition
 
 condition           : arith_expr op arith_expr
                     | (entity_id | scalar_function) op_list value_list  // IN: no arithmetic on LHS by design
+                    | list_predicate
                     | sub_query
                     | "not"i condition -> condition_not
 
@@ -66,6 +67,7 @@ condition           : arith_expr op arith_expr
 
 ?arith_atom         : entity_id
                     | scalar_function
+                    | relationship_list
                     | value
                     | NULL -> null
                     | TRUE -> true
@@ -111,7 +113,13 @@ attribute_id         : CNAME
                     | "size"i "(" expression_argument ")" -> size_function
                     | "type"i "(" entity_id ")" -> type_function
 
+relationship_list    : "relationships"i "(" entity_id ")" -> relationships_function
+
+list_predicate       : LIST_PREDICATE "(" CNAME "in"i relationship_list "where"i compound_condition ")" -> list_predicate
+LIST_PREDICATE       : "all"i | "any"i | "none"i | "single"i
+
 ?expression_argument : scalar_function
+                     | relationship_list
                      | entity_id
                      | value
                      | NULL -> null
@@ -248,6 +256,10 @@ _SUB_OPERATORS = {
 }
 
 
+class Condition:
+    pass
+
+
 _ARITH_OPS = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
@@ -336,6 +348,64 @@ class TypeExpression(ExpressionBase):
 
     def __str__(self):
         return f"type({self.argument})"
+
+
+class RelationshipsExpression(ExpressionBase):
+    def __init__(self, argument):
+        self.argument = argument
+
+    def evaluate(self, match, host, return_edges, scope=None):
+        if self.argument not in return_edges:
+            return None
+        motif_edge = return_edges[self.argument]
+        return [
+            dict(host.edges[edge.u, edge.v, edge.k])
+            if host.is_multigraph()
+            else dict(host.edges[edge.u, edge.v])
+            for edge in match.mth.edge(*motif_edge).edges
+        ]
+
+    def __str__(self):
+        return f"relationships({self.argument})"
+
+
+class ListPredicateExpression(Condition):
+    def __init__(self, name, variable, expression, condition):
+        self.name = name.upper()
+        self.variable = variable
+        self.expression = expression
+        self.condition = condition
+
+    def __call__(self, match, host, return_edges, scope=None):
+        values = self.expression.evaluate(match, host, return_edges, scope)
+        if values is None:
+            return None, [None]
+
+        results = []
+        for value in values:
+            item_scope = dict(scope or {})
+            item_scope[self.variable] = value
+            _, operator_results = self.condition(match, host, return_edges, item_scope)
+            results.append(operator_results[-1])
+
+        if self.name == "ALL":
+            value = False if False in results else None if None in results else True
+        elif self.name == "ANY":
+            value = True if True in results else None if None in results else False
+        elif self.name == "NONE":
+            value = False if True in results else None if None in results else True
+        elif self.name == "SINGLE":
+            true_count = results.count(True)
+            value = (
+                False
+                if true_count > 1
+                else None
+                if None in results
+                else true_count == 1
+            )
+        else:
+            raise ValueError(f"Unsupported list predicate: {self.name}")
+        return value, [value]
 
 
 class AggregationExpression:
@@ -778,10 +848,6 @@ def generate_multiedge_edge_hop_key(
 
 CONDITION = Callable[[dict, nx.DiGraph, list], bool]
 
-
-class Condition:
-    ...
-
 class BoolCondition(Condition):
     ...
 
@@ -792,9 +858,9 @@ class AND(BoolCondition):
         self._condition_b = condition_b
         self._operator = "and"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> bool:
-        condition_a, where_a = self._condition_a(match, host, return_edges)
-        condition_b, where_b = self._condition_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, scope=None) -> bool:
+        condition_a, where_a = self._condition_a(match, host, return_edges, scope)
+        condition_b, where_b = self._condition_b(match, host, return_edges, scope)
         where_result = [a and b for a, b in zip(where_a, where_b)]
         return (condition_a and condition_b), where_result
 
@@ -805,9 +871,9 @@ class OR(BoolCondition):
         self._condition_b = condition_b
         self._operator = "or"
 
-    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list) -> tuple[bool, dict]:
-        condition_a, where_a = self._condition_a(match, host, return_edges)
-        condition_b, where_b = self._condition_b(match, host, return_edges)
+    def __call__(self, match: dict, host: nx.DiGraph, return_edges: list, scope=None) -> tuple[bool, dict]:
+        condition_a, where_a = self._condition_a(match, host, return_edges, scope)
+        condition_b, where_b = self._condition_b(match, host, return_edges, scope)
         where_result = [a or b for a, b in zip(where_a, where_b)]
         return (condition_a or condition_b), where_result
 
@@ -1863,6 +1929,8 @@ class GrandCypherTransformer(Transformer):
 
     def compound_condition(self, val):
         if len(val) == 1:
+            if isinstance(val[0], ListPredicateExpression):
+                return val[0]
             val = CompoundCondition(*val[0])
         else:  # len == 3
             compound_a, operator, compound_b = val
@@ -1878,6 +1946,9 @@ class GrandCypherTransformer(Transformer):
     def condition(self, condition):
         if len(condition) == 1:  # sub query
             condition = condition[0]
+
+        if isinstance(condition, Condition):
+            return condition
 
         if len(condition) == 3:
             (entity_id, operator, value) = condition
@@ -1920,6 +1991,14 @@ class GrandCypherTransformer(Transformer):
 
     def type_function(self, items):
         return TypeExpression(items[0])
+
+    def relationships_function(self, items):
+        return RelationshipsExpression(items[0])
+
+    def list_predicate(self, items):
+        return ListPredicateExpression(
+            str(items[0]), str(items[1]), items[2], items[3]
+        )
 
     def value_list(self, items):
         return list(items)
