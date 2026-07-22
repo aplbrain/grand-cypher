@@ -101,7 +101,7 @@ return_clause       : "return"i distinct_return? return_item ("," return_item)*
 return_item         : (entity_id | aggregation_function | scalar_function) ( "AS"i alias )?
 alias               : CNAME
 
-aggregation_function : AGGREGATE_FUNC "(" entity_id ( "." attribute_id )? ")"
+aggregation_function : AGGREGATE_FUNC "(" expression_argument ")"
 AGGREGATE_FUNC       : "COUNT" | "SUM" | "AVG" | "MAX" | "MIN" | "COLLECT"
 attribute_id         : CNAME
 
@@ -414,9 +414,23 @@ class AggregationExpression:
     def __init__(self, argument):
         self.argument = argument
 
-    def evaluate(self, results, group_keys):
+    @property
+    def is_computed(self):
+        return not isinstance(self.argument, (EntityRef, AttributeRef, IDRef))
+
+    def evaluate(self, results, group_keys, matches=None, host=None, return_edges=None):
+        if isinstance(self.argument, str) and self.argument in results:
+            values = results[self.argument]
+        elif self.is_computed:
+            values = [
+                _evaluate_expression(self.argument, match, host, return_edges)
+                for match in matches or []
+            ]
+        else:
+            values = results[self.argument]
+
         grouped_data = {}
-        for i, value in enumerate(results[self.argument]):
+        for i, value in enumerate(values):
             group = tuple(results[key][i] for key in group_keys if key in results)
             grouped_data.setdefault(group, []).append(value)
 
@@ -1233,13 +1247,23 @@ class GrandCypherExecutor:
             group_keys = [
                 key
                 for key in results.keys()
-                if not any(key.endswith(func.argument) for func in self._aggregate_functions)
+                if not any(
+                    not func.is_computed
+                    and key.endswith(func.argument)
+                    for func in self._aggregate_functions
+                )
             ]
 
             aggregated_results = {}
             aggregation_keys = None
             for func in self._aggregate_functions:
-                aggregated_data = func.evaluate(results, group_keys)
+                aggregated_data = func.evaluate(
+                    results,
+                    group_keys,
+                    matches=self._get_true_matches(),
+                    host=self._target_graph,
+                    return_edges=self._return_edges,
+                )
                 aggregated_values = list(aggregated_data.values())
                 current_keys = list(aggregated_data.keys())
                 if aggregation_keys is None:
@@ -1703,7 +1727,8 @@ class GrandCypherTransformer(Transformer):
                     func = self._parse_aggregation_token(item)
                     if alias:
                         self._executors[-1]._entity2alias[str(func)] = alias
-                    self._executors[-1]._aggregation_attributes.add(func.argument)
+                    if not func.is_computed:
+                        self._executors[-1]._aggregation_attributes.add(func.argument)
                     self._executors[-1]._aggregate_functions.append(func)
                 else:
                     if isinstance(item, ExpressionBase) and not isinstance(
@@ -1726,17 +1751,9 @@ class GrandCypherTransformer(Transformer):
         self._executors[-1]._alias2entity.update({v: k for k, v in self._executors[-1]._entity2alias.items()})
 
     def _parse_aggregation_token(self, item: Tree):
-        """
-        Parse the aggregation function token and return the function and entity
-            input: Tree('aggregation_function', [Token('AGGREGATE_FUNC', 'SUM'), Token('CNAME', 'r'), Tree('attribute_id', [Token('CNAME', 'value')])])
-            output: ('SUM', 'r.value')
-        """
-        func = str(item.children[0].value)  # AGGREGATE_FUNC
-        entity = str(item.children[1].value)
-        if len(item.children) > 2:
-            entity += "." + str(item.children[2].children[0].value)
-
-        return _AGGREGATION_FUNCTIONS[func](entity)
+        """Build an aggregation expression from its parsed argument expression."""
+        func = str(item.children[0].value)
+        return _AGGREGATION_FUNCTIONS[func](item.children[1])
 
     def _extract_alias(self, item: Tree):
         """
@@ -1771,7 +1788,8 @@ class GrandCypherTransformer(Transformer):
             ):
                 func = self._parse_aggregation_token(item.children[0])
                 field = str(func)
-                self._executors[-1]._order_by_attributes.add(func.argument)
+                if not func.is_computed:
+                    self._executors[-1]._order_by_attributes.add(func.argument)
             else:
                 field = str(
                     item.children[0]
