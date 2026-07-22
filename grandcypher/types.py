@@ -30,6 +30,8 @@ class EntityRef(str, ExpressionBase):
         return (self.entity_name,)
 
     def evaluate(self, match, host, return_edges, scope=None):
+        if scope is not None and self.entity_name in scope:
+            return scope[self.entity_name]
         raise TypeError(
             f"Cannot use bare entity '{self}' in a comparison. "
             f"Use a property like '{self}.attribute' or ID({self})."
@@ -52,6 +54,9 @@ class AttributeRef(str, ExpressionBase):
         return (self.entity_name, self.attribute)
 
     def evaluate(self, match, host, return_edges, scope=None):
+        if scope is not None and self.entity_name in scope:
+            value = scope[self.entity_name]
+            return value.get(self.attribute) if isinstance(value, dict) else None
         if self.entity_name in match.node_mappings:
             host_node_id = match.node_mappings[self.entity_name]
             return host.nodes[host_node_id].get(self.attribute)
