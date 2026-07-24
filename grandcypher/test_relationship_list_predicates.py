@@ -149,6 +149,21 @@ def test_relationship_predicate_query_can_be_reused(path_graph):
     assert grand_cypher.run(query) == expected
 
 
+@pytest.mark.benchmark
+def test_benchmark_relationship_list_predicate():
+    host = nx.DiGraph()
+    for index in range(100):
+        host.add_edge(index, index + 1, weight=index % 10)
+
+    result = GrandCypher(host).run(
+        "MATCH (a)-[r*2]->(b) "
+        "WHERE ALL(edge IN relationships(r) WHERE edge.weight >= 0) "
+        "RETURN ID(a)"
+    )
+
+    assert len(result["ID(a)"]) == 99
+
+
 @pytest.mark.parametrize(
     ("predicate", "expected"),
     [("ALL", True), ("ANY", False), ("NONE", True), ("SINGLE", False)],
