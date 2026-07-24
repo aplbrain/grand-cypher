@@ -25,7 +25,9 @@ RETURN A.club, B.club
 """)
 ```
 
-See [examples.md](docs/examples.md) for more!
+See [examples.md](docs/examples.md) for more, or read the
+[expressions and functions guide](docs/Expressions.md).
+Implementation details are documented in [Architecture.md](docs/Architecture.md).
 
 ### Example Usage with SQL
 
@@ -80,9 +82,11 @@ RETURN
 | `DISTINCT`                                                  | ✅ Thanks @jackboyla!      |
 | `ORDER BY`                                                  | ✅ Thanks @jackboyla!      |
 | `IN`                                                        | ✅ Thanks @davidmezzetti!  |
-| Aggregation functions (`COUNT`, `SUM`, `MIN`, `MAX`, `AVG`) | ✅ Thanks @jackboyla!      |
+| Aggregation functions (`COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, `COLLECT`) | ✅ Thanks @jackboyla! |
 | Aliasing of returned entities (`return X as Y`)             | ✅ Thanks @jackboyla!      |
 | `WHERE` clause arithmetic support for math / numbers        | ✅ Thanks @q-rosiebloxsom! |
+| Scalar functions (`toLower`, `toUpper`, `trim`, `coalesce`, `size`, `type`) | ✅ |
+| Relationship lists and predicates (`ALL`, `ANY`, `NONE`, `SINGLE`) | ✅ |
 | Negated edges (`where not (a)-->(b)`)                       | 🥺                         |
 | `OPTIONAL MATCH`                                            | 🥺                         |
 | Graph mutations (e.g. `DELETE`, `SET`,...)                  | 🥺                         |

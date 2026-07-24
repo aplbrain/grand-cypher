@@ -1,5 +1,22 @@
 # CHANGELOG
 
+### **1.2.0** (July 24, 2026)
+
+### Features
+
+-   Add composable scalar functions in `WHERE` and `RETURN`: `toLower`, `toUpper`, `trim`, `coalesce`, `size`, and relationship `type`.
+-   Add `COLLECT` aggregation and support scalar expressions inside aggregations.
+-   Add `relationships()` for selected relationship sequences.
+-   Add scoped `ALL`, `ANY`, `NONE`, and `SINGLE` relationship-list predicates with null-aware semantics.
+
+### Performance
+
+-   Add continuous benchmarks for scalar filtering, grouped collection, relationship-list predicates, and nested scalar aggregation.
+
+### Internals
+
+-   Introduce typed expression evaluation and concrete aggregation classes.
+
 ### **1.1.0** (June 30, 2026)
 
 ### Features
