@@ -115,3 +115,19 @@ def test_scalar_expression_is_picklable():
     expression = grand_cypher._transformer._executors[0]._return_requests[0]
 
     assert str(pickle.loads(pickle.dumps(expression))) == "toLower(n.name)"
+
+
+@pytest.mark.parametrize(
+    "query,key",
+    [
+        ("MATCH (n) RETURN toLower(123)", "toLower(123)"),
+        ("MATCH (n) RETURN toUpper(1.5)", "toUpper(1.5)"),
+        ("MATCH (n) RETURN trim(true)", "trim(True)"),
+        ("MATCH (n) RETURN size(123)", "size(123)"),
+    ],
+)
+def test_scalar_functions_return_null_for_invalid_argument_types(query, key):
+    host = nx.DiGraph()
+    host.add_node("a", name="Alice")
+
+    assert GrandCypher(host).run(query) == {key: [None]}
