@@ -308,7 +308,12 @@ class ScalarFunctionExpression(ExpressionBase):
 
     def evaluate(self, match, host, return_edges, scope=None):
         value = _evaluate_expression(self.argument, match, host, return_edges, scope)
-        return self.function(value) if value is not None else None
+        if value is None:
+            return None
+        try:
+            return self.function(value)
+        except (AttributeError, TypeError):
+            return None
 
     def __str__(self):
         argument = getattr(self, "argument_display", self.argument)
